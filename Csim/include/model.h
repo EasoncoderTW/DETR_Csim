@@ -1,17 +1,16 @@
 #ifndef MODEL_H
 #define MODEL_H
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
-#include <string.h>
-#include <assert.h>
+#include <ctype.h>
+#include <stdio.h>
 
 #define DATA_TYPE float
 #define DATA_TYPE_SIZE sizeof(DATA_TYPE)
 #define SQRT sqrtf
 
-#define CONV_SIZE(runstate) ((runstate)->height * (runstate)->width * (runstate)->channels)
+#define CONV_SIZE(runstate) ((runstate).height * (runstate).width * (runstate).channels)
+#define CONV_SHAPE_COPY(to,from) {(to).height = (from).height; (to).width = (from).width; (to).channels = (from).channels;}
 
 #define CONV_OP_PER_BUTTLENECK 3
 #define CONV_ID(resblock_id, conv_id) ((conv_id) + CONV_OP_PER_BUTTLENECK*(resblock_id))
@@ -44,6 +43,12 @@ typedef struct{
 } ConvConfig; // 20bytes
 
 typedef struct{
+    int kernel_size; // kernel size (R/S)
+    int stride; // stride (U)
+    int padding; // padding (P)
+} MaxPoolConfig;
+
+typedef struct{
     int num_bottleneck;
     ConvConfig shortcut;
     ConvConfig* conv;
@@ -52,12 +57,13 @@ typedef struct{
 typedef struct{
     int num_resblock;
     ConvConfig conv1; // first conv layer
+    MaxPoolConfig maxpool; // only one maxpooling layer
     ResidualConfig *resblock; // residual blocks
     ConvConfig conv2; // final conv layer
 } ResNet50Config; // 600bytes
 
 typedef struct{
-    TransformerConfig tranformer; // transformer encoder config
+    TransformerConfig transformer; // transformer encoder config
     ResNet50Config resnet50; // ResNet50 config
     int num_classes; // number of classes (C)
     int num_boxes; // number of boxes (B)
@@ -80,7 +86,6 @@ typedef struct{
 } BatchNormWeights;
 
 typedef struct{
-    int num_bottleneck;
     ConvWeights shortcut;
     BatchNormWeights bn_shortcut;
     ConvWeights* conv;
@@ -90,7 +95,7 @@ typedef struct{
 /* ResNet50 */
 typedef struct{
     ConvWeights conv1;
-    BatchNormWeights* bn1;
+    BatchNormWeights bn1;
     ResidualWeights *resblock; // residual blocks
     ConvWeights conv2;
 }ResNet50Weights;
@@ -176,8 +181,7 @@ typedef struct{
     ResNet50Weights resnet50; // backbone
     EncoderWeights *encoder; // transformer encoder
     DecoderWeights *decoder; // transformer decoder
-    OutputEmbedWeights *outputembed; // Output Embedding
-    DATA_TYPE* query_pos_embedding; // (seq_len, dim)
+    OutputEmbedWeights outputembed; // Output Embedding
 } DETRWeights;
 
 /*
@@ -204,7 +208,7 @@ typedef struct {
     DATA_TYPE *k; // key (dim, seq_len)
     DATA_TYPE *v; // value (dim, seq_len)
     DATA_TYPE *att; // buffer for scores/attention values (n_heads, seq_len, seq_len)
-    bool *att_mask; // attention mask
+    int *att_mask; // attention mask
 } EncoderRunState;
 
 /* Transformer Decoder RunState */
@@ -234,23 +238,44 @@ typedef struct {
 } OutputRunState;
 
 /*
-* DETR
+* DETR model
 */
 
 typedef struct{
     DETRConfig config;
     DETRWeights weights;
+    /* for binary file */
+    FILE *weight_fp;
+    void *weight_mmap;
 } DETR;
 
 /*
- * Functions
+ * Utils
  */
 
-void print_config(DETR* detr);
-void init_detr(DETR* detr, const char* config_file, const char* weights_file);
+int extract_int_value(const char* key, const char* json);
+char* load_json_file(const char* filename);
+void parse_conv_config(const char* section, ConvConfig* config);
+void parse_maxpool_config(const char* section, MaxPoolConfig* config);
+
+int load_config(const char* filename, DETR* detr);
+void free_config(DETR* detr);
+int load_weight(const char* filename, DETR* detr);
+void free_weights(DETR* detr);
+
+/*
+ *  API
+ */
+void print_conv_config(int level, const char* name, const ConvConfig *config);
+void print_config(DETRConfig *config);
+int init_detr(DETR* detr, const char* config_file, const char* weights_file);
 void free_detr(DETR* detr);
 
 void print_result(OutputRunState* result);
+
+/*
+ *  Runstate
+ */
 
 /* malloc and free of ConvolutionRunState */
 void malloc_conv2D_run_state(ConvolutionRunState* r);
@@ -262,7 +287,7 @@ void free_encoder_run_state(EncoderRunState* r);
 void malloc_decoder_run_state(const TransformerConfig* config, DecoderRunState* r);
 void free_decoder_run_state(DecoderRunState* r);
 /* malloc and free of OutputRunState */
-void malloc_output_run_state(const TransformerConfig* config, OutputRunState* r);
+void malloc_output_run_state(const DETRConfig* config, OutputRunState* r);
 void free_output_run_state(OutputRunState* r);
 
 /*
@@ -277,7 +302,7 @@ void forward_output(DETRConfig* c, OutputEmbedWeights* w, OutputRunState* r);
  *  Operations
  */
  void conv2D(ConvolutionRunState *output, const ConvolutionRunState *input, const ConvConfig *config, const ConvWeights *weights);
- void maxpooling2D(ConvolutionRunState *output, const ConvolutionRunState *input, int stride);
+ void maxpooling2D(ConvolutionRunState *output, const ConvolutionRunState *input, const MaxPoolConfig* config);
  void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n, int dim);
  void batchnorm2D(ConvolutionRunState *output, const ConvolutionRunState *input, BatchNormWeights *bn);
  void gemm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n, int id, int od);

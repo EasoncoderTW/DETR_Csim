@@ -2,7 +2,7 @@
 all: build
 
 build:
-	gcc -o detr ./detr.c ./src/model.c -I./include
+	gcc -o detr ./detr.c ./src/model.c -I./include -lm
 
 clean:
 	rm -f detr
