@@ -1,2 +1,35 @@
-__pycache__
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.log
+*.env
+.env/
+*.venv
+.venv/
+*.egg-info/
+dist/
+build/
+
+# C
+*.o
+*.obj
+*.so
+*.a
+*.out
+*.exe
+*.dll
+*.dSYM/
+*.d
+*.gcno
+*.gcda
+*.gcov
+
+# General
 *.bin
+*.swp
+*.tmp
+*.bak
+*.DS_Store
+Thumbs.db

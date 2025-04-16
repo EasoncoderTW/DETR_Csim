@@ -62,23 +62,26 @@ class ModelDict(object):
     def summary(self):
         weight_count = 0
         bias_count = 0
+        other_count = 0
         tensor_size = 0
         for param_tensor in self.model.state_dict():
             name = param_tensor.split('.')
-            if name[-1] in ["weight","bias"]:
-                tensor = self.model.state_dict()[param_tensor]
-                if name[-1] == "weight":
-                    weight_count+=1
-                if name[-1] == "bias":
-                    bias_count+=1
-                tensor_size += tensor.size().numel()
+            tensor = self.model.state_dict()[param_tensor]
+            if name[-1] == "weight":
+                weight_count+=1
+            elif name[-1] == "bias":
+                bias_count+=1
+            else:
+                other_count+=1
+            tensor_size += tensor.size().numel()
                 # print(param_tensor, "\t", tensor.size())
 
         print(f"[total weight count]", weight_count)
         print(f"[total bias count]", bias_count)
-        print(f"[total tensor size] {tensor_size * 4/1024/1024:.3f} MB")
+        print(f"[total others count]", other_count)
+        print(f"[total tensor size] ",self.format_bytes(tensor_size*4))
 
-    def save_state_dict(self, filename, callback: Callable[[torch.Tensor], bytes]):
+    def save_state_dict(self, filename, callback: Callable[[str,torch.Tensor], bytes]):
         head = bytes()
         table = bytes()
         name = bytes()
@@ -86,29 +89,26 @@ class ModelDict(object):
 
         tensor_count = 0
         for tensor_name in tqdm(self.model.state_dict(), "Processing Weight "):
-            is_weight = (tensor_name[-6:] == "weight")
-            is_bias = (tensor_name[-4:] == "bias")
-            if is_weight or is_bias:
-                tensor = self.model.state_dict()[tensor_name]
+            tensor = self.model.state_dict()[tensor_name]
 
-                # pack into bytes
-                tensor_name_Cstr_bytes = bytes(tensor_name+'\0', 'ascii')
-                data_bytes = callback(tensor) # custom pack method
+            # pack into bytes
+            tensor_name_Cstr_bytes = bytes(tensor_name+'\0', 'ascii')
+            data_bytes = callback(tensor_name, tensor) # custom pack method
 
-                info = TensorInfo(
-                            id=tensor_count,
-                            data_type = ModelDict.DATA_TYPE['fp32'],
-                            data_offset = len(data),
-                            data_size = len(data_bytes),
-                            name_offset = len(name),
-                            name_size = len(tensor_name_Cstr_bytes))
+            info = TensorInfo(
+                        id=tensor_count,
+                        data_type = ModelDict.DATA_TYPE['fp32'],
+                        data_offset = len(data),
+                        data_size = len(data_bytes),
+                        name_offset = len(name),
+                        name_size = len(tensor_name_Cstr_bytes))
 
-                tensor_count+=1
+            tensor_count+=1
 
-                # concat
-                table += info.to_bytes()
-                name += tensor_name_Cstr_bytes # C string
-                data += data_bytes
+            # concat
+            table += info.to_bytes()
+            name += tensor_name_Cstr_bytes # C string
+            data += data_bytes
 
 
         HEAD_SIZE = 24
@@ -136,11 +136,68 @@ class ModelDict(object):
 
 
 #########
-def normal_pack(tensor:torch.Tensor)->bytes:
+def normal_pack(tensor_name:str, tensor:torch.Tensor)->bytes:
     # Convert to float32
     tensor = tensor.to(dtype=torch.float32)
+
+    if tensor_name == "query_embed.weight":
+        tensor = tensor.transpose(0,1)
+
+    # print(tensor_name, tensor.shape)
 
     # Convert to bytes
     tensor_bytes = tensor.detach().cpu().numpy().tobytes()
 
     return tensor_bytes
+
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Export model weights to binary")
+
+    parser.add_argument(
+        "-r", "--repo_or_dir",
+        type=str,
+        required=True,
+        help="Repo name (e.g. 'facebookresearch/detr:main') or local dir"
+    )
+
+    parser.add_argument(
+        "-m", "--model",
+        type=str,
+        required=True,
+        help="Model name (e.g. 'detr_resnet50')"
+    )
+
+    parser.add_argument(
+        "-o", "--output",
+        type=str,
+        required=True,
+        help="Path to output binary file"
+    )
+
+    parser.add_argument(
+        "-l", "--list",
+        type=bool,
+        required=False,
+        help="List model weights"
+    )
+
+
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = parse_args()
+    print("Repo or dir:", args.repo_or_dir)
+    print("Model:", args.model)
+    print("Output path:", args.output)
+    print("List model weights:", args.list)
+
+    model = torch.hub.load(args.repo_or_dir, args.model, pretrained=True)
+    MD = ModelDict(model)
+    if args.list:
+        print("Model weights:")
+        for name, tensor in model.state_dict().items():
+            print(f"{name}: {tensor.shape}")
+    MD.summary()
+    MD.save_state_dict(args.output, normal_pack)

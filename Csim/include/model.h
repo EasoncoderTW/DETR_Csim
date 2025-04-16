@@ -1,258 +1,282 @@
 #ifndef MODEL_H
 #define MODEL_H
 
-#include <stdint.h>
 #include <ctype.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <sys/mman.h>
 
 #define DATA_TYPE float
-#define DATA_TYPE_SIZE sizeof(DATA_TYPE)
-#define SQRT sqrtf
+#define MASK_TYPE uint8_t
+#define CONVTENSOR_INITIALIZER \
+  { NULL, 0, 0, 0 }
+#define OUTPUTTENSOR_INITIALIZER \
+  { NULL, NULL, 0, 0 }
 
-#define CONV_SIZE(runstate) ((runstate).height * (runstate).width * (runstate).channels)
-#define CONV_SHAPE_COPY(to,from) {(to).height = (from).height; (to).width = (from).width; (to).channels = (from).channels;}
+//**************************************
+// DETR model configuration
+//**************************************
+typedef struct {
+  int dim;               // transformer dimension
+  int hidden_dim;        // for ffn layers
+  int n_encoder_layers;  // number of encoder layers
+  int n_decoder_layers;  // number of decoder layers
+  int n_heads;           // number of query heads
+  int encoder_seq_len;   // max sequence length
+  int decoder_seq_len;   // max sequence length
+} TransformerConfig;
 
-#define CONV_OP_PER_BUTTLENECK 3
-#define CONV_ID(resblock_id, conv_id) ((conv_id) + CONV_OP_PER_BUTTLENECK*(resblock_id))
+typedef struct {
+  int in_channels;   // input channels (C)
+  int out_channels;  // output channels (M)
+  int kernel_size;   // kernel size (R/S)
+  int stride;        // stride (U)
+  int padding;       // padding (P)
+} ConvConfig;
 
-#define RESBLOCK 4
-#define ENCODER_LAYER 6
-#define DECODER_LAYER 6
-
-#define BBOX_COORDS 4
-
-/*
-* Config
-*/
-typedef struct{
-    int dim; // transformer dimension
-    int hidden_dim; // for ffn layers
-    int n_encoder_layers; // number of encoder layers
-    int n_decoder_layers; // number of decoder layers
-    int n_heads; // number of query heads
-    int encoder_seq_len; // max sequence length
-    int decoder_seq_len; // max sequence length
-} TransformerConfig; // 28bytes
-
-typedef struct{
-    int in_channels; // input channels (C)
-    int out_channels; // output channels (M)
-    int kernel_size; // kernel size (R/S)
-    int stride; // stride (U)
-    int padding; // padding (P)
-} ConvConfig; // 20bytes
-
-typedef struct{
-    int kernel_size; // kernel size (R/S)
-    int stride; // stride (U)
-    int padding; // padding (P)
+typedef struct {
+  int kernel_size;  // kernel size (R/S)
+  int stride;       // stride (U)
+  int padding;      // padding (P)
 } MaxPoolConfig;
 
-typedef struct{
-    int num_bottleneck;
-    ConvConfig shortcut;
-    ConvConfig* conv;
-} ResidualConfig; // 20bytes
+typedef struct {
+  int num_bottleneck;
+  ConvConfig downsample;
+  ConvConfig* conv;
+} ResidualConfig;
 
-typedef struct{
-    int num_resblock;
-    ConvConfig conv1; // first conv layer
-    MaxPoolConfig maxpool; // only one maxpooling layer
-    ResidualConfig *resblock; // residual blocks
-    ConvConfig conv2; // final conv layer
-} ResNet50Config; // 600bytes
+typedef struct {
+  int num_resblock;
+  ConvConfig conv1;          // first conv layer
+  MaxPoolConfig maxpool;     // only one maxpooling layer
+  ResidualConfig* resblock;  // residual blocks
+  ConvConfig input_proj;     // final conv layer
+} ResNet50Config;
 
-typedef struct{
-    TransformerConfig transformer; // transformer encoder config
-    ResNet50Config resnet50; // ResNet50 config
-    int num_classes; // number of classes (C)
-    int num_boxes; // number of boxes (B)
-} DETRConfig; // 636bytes
+typedef struct {
+  TransformerConfig transformer;  // transformer encoder config
+  ResNet50Config resnet50;        // ResNet50 config
+  int num_classes;                // number of classes (C)
+  int num_boxes;                  // number of boxes (B)
+  int image_height;               // image height (H)
+  int image_width;                // image width (W)
+  int image_channels;             // image channels (C)
+} DETRConfig;
 
-/*
-* Weights
-*/
+//**************************************
+// Weights
+//**************************************
 
-/* Convolution weight */
-typedef struct{
-    DATA_TYPE* weight; // (out_channels, in_channels, kernel_height, kernel_width)
-    DATA_TYPE* bias;   // (out_channels)
+typedef struct {
+  DATA_TYPE*
+      weight;       // (out_channels, in_channels, kernel_height, kernel_width)
+  DATA_TYPE* bias;  // (out_channels) // reserved for future use
 } ConvWeights;
 
-/* BatchNorm weight */
-typedef struct{
-    DATA_TYPE* weight; // (out_channels, in_channels, kernel_height, kernel_width)
-    DATA_TYPE* bias;   // (out_channels)
+typedef struct {
+  DATA_TYPE*
+      weight;       // (out_channels, in_channels, kernel_height, kernel_width)
+  DATA_TYPE* bias;  // (out_channels)
+  DATA_TYPE* running_mean;  // (out_channels)
+  DATA_TYPE* running_var;   // (out_channels)
 } BatchNormWeights;
 
-typedef struct{
-    ConvWeights shortcut;
-    BatchNormWeights bn_shortcut;
-    ConvWeights* conv;
-    BatchNormWeights* bn;
+typedef struct {
+  ConvWeights downsample;
+  BatchNormWeights bn_downsample;
+  ConvWeights* conv;
+  BatchNormWeights* bn;
 } ResidualWeights;
 
-/* ResNet50 */
-typedef struct{
-    ConvWeights conv1;
-    BatchNormWeights bn1;
-    ResidualWeights *resblock; // residual blocks
-    ConvWeights conv2;
-}ResNet50Weights;
+typedef struct {
+  ConvWeights conv1;
+  BatchNormWeights bn1;
+  ResidualWeights* resblock;  // residual blocks
+  ConvWeights input_proj;
+} ResNet50Weights;
 
-
-/* transformer encoder weight */
-typedef struct{
-    // position embedding
-    DATA_TYPE* pos_embedding;    // (seq_len, dim)
-    // weights for matmuls. note dim == n_heads * head_size
-    DATA_TYPE* wq; // (layer, dim, n_heads * head_size)
-    DATA_TYPE* bq; // (layer, dim)
-    DATA_TYPE* wk; // (layer, dim,  n_heads * head_size)
-    DATA_TYPE* bk; // (layer, dim)
-    DATA_TYPE* wv; // (layer, dim,  n_heads * head_size)
-    DATA_TYPE* bv; // (layer, dim)
-    DATA_TYPE* wo; // (layer, dim,  dim)
-    DATA_TYPE* bo; // (layer, dim)
-    // weights for layernorm
-    DATA_TYPE* wln1;  // (layer, dim)
-    DATA_TYPE* bln1;  // (layer, dim)
-    DATA_TYPE* wln2;  // (layer, dim)
-    DATA_TYPE* bln2;  // (layer, dim)
-    // weights for ffn
-    DATA_TYPE* w1; // (layer, dim, hidden_dim)
-    DATA_TYPE* b1; // (layer, hidden_dim)
-    DATA_TYPE* w2; // (layer, hidden_dim, dim)
-    DATA_TYPE* b2; // (layer, dim)
+typedef struct {
+  // position embedding
+  DATA_TYPE* pos_embedding;  // (dim, seq_len)
+  // attention mask
+  MASK_TYPE* att_mask;  //(seq_len, seq_len)
+  // weights for matmuls. note dim == n_heads * head_size
+  DATA_TYPE* wq;  // (layer, dim, n_heads * head_size)
+  DATA_TYPE* bq;  // (layer, dim)
+  DATA_TYPE* wk;  // (layer, dim,  n_heads * head_size)
+  DATA_TYPE* bk;  // (layer, dim)
+  DATA_TYPE* wv;  // (layer, dim,  n_heads * head_size)
+  DATA_TYPE* bv;  // (layer, dim)
+  DATA_TYPE* wo;  // (layer, dim,  dim)
+  DATA_TYPE* bo;  // (layer, dim)
+  // weights for layernorm
+  DATA_TYPE* wln1;  // (layer, dim)
+  DATA_TYPE* bln1;  // (layer, dim)
+  DATA_TYPE* wln2;  // (layer, dim)
+  DATA_TYPE* bln2;  // (layer, dim)
+  // weights for ffn
+  DATA_TYPE* w1;  // (layer, dim, hidden_dim)
+  DATA_TYPE* b1;  // (layer, hidden_dim)
+  DATA_TYPE* w2;  // (layer, hidden_dim, dim)
+  DATA_TYPE* b2;  // (layer, dim)
 } EncoderWeights;
 
-/* transformer decoder weight */
-typedef struct{
-    // position embedding
-    DATA_TYPE* pos_embedding;    // (seq_len, dim)
-    // weights for matmuls. note dim == n_heads * head_size
-    DATA_TYPE* wq; // (layer, dim, n_heads * head_size)
-    DATA_TYPE* bq; // (layer, dim)
-    DATA_TYPE* wk; // (layer, dim,  n_heads * head_size)
-    DATA_TYPE* bk; // (layer, dim)
-    DATA_TYPE* wv; // (layer, dim,  n_heads * head_size)
-    DATA_TYPE* bv; // (layer, dim)
-    DATA_TYPE* wo; //  (layer, dim,  dim)
-    DATA_TYPE* bo; // (layer, dim)
-    // query position embedding
-    DATA_TYPE* query_pos_embedding;    // (seq_len, dim)
-    // weights for matmuls. note dim == n_heads * head_size
-    DATA_TYPE* wq2; // (layer, dim, n_heads * head_size)
-    DATA_TYPE* bq2; // (layer, dim)
-    DATA_TYPE* wk2; // (layer, dim,  n_heads * head_size)
-    DATA_TYPE* bk2; // (layer, dim)
-    DATA_TYPE* wv2; // (layer, dim,  n_heads * head_size)
-    DATA_TYPE* bv2; // (layer, dim)
-    DATA_TYPE* wo2; // (layer, dim, dim)
-    DATA_TYPE* bo2; // (layer, dim)
-    // weights for layernorm
-    DATA_TYPE* wln1;  // (layer, dim)
-    DATA_TYPE* bln1;  // (layer, dim)
-    DATA_TYPE* wln2;  // (layer, dim)
-    DATA_TYPE* bln2;  // (layer, dim)
-    DATA_TYPE* wln3;  // (layer, dim)
-    DATA_TYPE* bln3;  // (layer, dim)
-    // weights for ffn
-    DATA_TYPE* w1; // (layer, dim, hidden_dim)
-    DATA_TYPE* b1; // (layer, hidden_dim)
-    DATA_TYPE* w2; // (layer, hidden_dim, dim)
-    DATA_TYPE* b2; // (layer, dim)
+typedef struct {
+  // position embedding
+  DATA_TYPE* pos_embedding;  // (dim, seq_len)
+  // query position embedding
+  DATA_TYPE* query_pos_embedding;  // (dim, seq_len)
+  // weights for matmuls. note dim == n_heads * head_size
+  DATA_TYPE* wq;  // (layer, n_heads , head_size, dim)
+  DATA_TYPE* bq;  // (layer, n_heads , head_size)
+  DATA_TYPE* wk;  // (layer, n_heads , head_size, dim)
+  DATA_TYPE* bk;  // (layer, n_heads , head_size)
+  DATA_TYPE* wv;  // (layer, n_heads , head_size, dim)
+  DATA_TYPE* bv;  // (layer, n_heads , head_size)
+  DATA_TYPE* wo;  // (layer, dim,  dim)
+  DATA_TYPE* bo;  // (layer, dim)
+  // weights for matmuls. note dim == n_heads * head_size
+  DATA_TYPE* wq2;  // (layer, n_heads , head_size, dim)
+  DATA_TYPE* bq2;  // (layer, n_heads , head_size)
+  DATA_TYPE* wk2;  // (layer, n_heads , head_size, dim)
+  DATA_TYPE* bk2;  // (layer, n_heads , head_size)
+  DATA_TYPE* wv2;  // (layer, n_heads , head_size, dim)
+  DATA_TYPE* bv2;  // (layer, n_heads , head_size)
+  DATA_TYPE* wo2;  // (layer, dim, dim)
+  DATA_TYPE* bo2;  // (layer, dim)
+  // weights for layernorm
+  DATA_TYPE* wln1;  // (layer, dim)
+  DATA_TYPE* bln1;  // (layer, dim)
+  DATA_TYPE* wln2;  // (layer, dim)
+  DATA_TYPE* bln2;  // (layer, dim)
+  DATA_TYPE* wln3;  // (layer, dim)
+  DATA_TYPE* bln3;  // (layer, dim)
+  // weights for ffn
+  DATA_TYPE* w1;  // (layer, hidden_dim, dim)
+  DATA_TYPE* b1;  // (layer, hidden_dim)
+  DATA_TYPE* w2;  // (layer, dim, hidden_dim)
+  DATA_TYPE* b2;  // (layer, dim)
 } DecoderWeights;
 
-/* Output Embedding */
-typedef struct{
-    DATA_TYPE* class_w; // (num_classes, dim)
-    DATA_TYPE* class_b; // (num_classes)
-    DATA_TYPE* bbox_w1; // (dim, dim)
-    DATA_TYPE* bbox_b1; // (dim)
-    DATA_TYPE* bbox_w2; // (dim, dim)
-    DATA_TYPE* bbox_b2; // (dim)
-    DATA_TYPE* bbox_w3; // (4, dim)
-    DATA_TYPE* bbox_b3; // (4)
-}OutputEmbedWeights;
+typedef struct {
+  DATA_TYPE* class_w;  // (num_classes, dim)
+  DATA_TYPE* class_b;  // (num_classes)
+  DATA_TYPE* bbox_w1;  // (dim, dim)
+  DATA_TYPE* bbox_b1;  // (dim)
+  DATA_TYPE* bbox_w2;  // (dim, dim)
+  DATA_TYPE* bbox_b2;  // (dim)
+  DATA_TYPE* bbox_w3;  // (4, dim)
+  DATA_TYPE* bbox_b3;  // (4)
+} OutputEmbedWeights;
 
-/* DETR weights */
-typedef struct{
-    ResNet50Weights resnet50; // backbone
-    EncoderWeights *encoder; // transformer encoder
-    DecoderWeights *decoder; // transformer decoder
-    OutputEmbedWeights outputembed; // Output Embedding
+typedef struct {
+  DATA_TYPE* pos_embedding;  // position embedding (dim, seq_len)
+  MASK_TYPE* att_mask;       // attention mask (seq_len, seq_len)
+} PreprocessWeights;
+
+typedef struct {
+  PreprocessWeights preprocess;    // preprocessing weights
+  ResNet50Weights resnet50;        // backbone
+  EncoderWeights* encoder;         // transformer encoder
+  DecoderWeights* decoder;         // transformer decoder
+  OutputEmbedWeights outputembed;  // Output Embedding
 } DETRWeights;
 
-/*
-* Activations
-*/
+//**************************************
+// DETR model tensor
+//**************************************
 
-/* Convolution RunState */
-typedef struct{
-    DATA_TYPE* x; // (channels, height, width)
-    int height; // height of the activation
-    int width; // width of the activation
-    int channels; // input channels (C)
-} ConvolutionRunState;
-
-/* Transformer Encoder RunState */
 typedef struct {
-    // current wave of activations
-    DATA_TYPE *x; // activation at current time stamp (dim, seq_len)
-    DATA_TYPE *xb; // same, but inside a residual branch (dim, seq_len)
-    DATA_TYPE *xb2; // an additional buffer just for convenience (dim, seq_len)
-    DATA_TYPE *hb; // buffer for hidden dimension in the ffn (hidden_dim, seq_len)
-    DATA_TYPE *hb2; // buffer for hidden dimension in the ffn (hidden_dim, seq_len)
-    DATA_TYPE *q; // query (dim, seq_len)
-    DATA_TYPE *k; // key (dim, seq_len)
-    DATA_TYPE *v; // value (dim, seq_len)
-    DATA_TYPE *att; // buffer for scores/attention values (n_heads, seq_len, seq_len)
-    int *att_mask; // attention mask
+  DATA_TYPE* x;  // (channels, height, width)
+  int height;    // height of the activation
+  int width;     // width of the activation
+  int channels;  // input channels (C)
+} ConvolutionTensor;
+
+typedef struct {
+  DATA_TYPE* classes;  // (num_classes, seq_len)
+  DATA_TYPE* bbox;     // (4, seq_len)
+  int num_boxes;       // sequence length
+  int num_classes;     // number of classes (C)
+} OutputTensor;
+
+//**************************************
+// DETR model runstate
+//**************************************
+
+typedef struct {
+  DATA_TYPE* x;    // activation at current time stamp (dim, seq_len)
+  DATA_TYPE* xb;   // same, but inside a residual branch (dim, seq_len)
+  DATA_TYPE* xb2;  // an additional buffer just for convenience (dim, seq_len)
+  DATA_TYPE* hb;   // buffer in the ffn (hidden_dim, seq_len)
+  DATA_TYPE* hb2;  // buffer in the ffn (hidden_dim, seq_len)
+  DATA_TYPE* q;    // query (dim, seq_len)
+  DATA_TYPE* k;    // key (dim, seq_len)
+  DATA_TYPE* v;    // value (dim, seq_len)
+  DATA_TYPE* att;  // buffer for scores/attention (n_heads, seq_len, seq_len)
 } EncoderRunState;
 
-/* Transformer Decoder RunState */
 typedef struct {
-    // current wave of activations
-    DATA_TYPE *x; // activation at current time stamp (dim, seq_len)
-    DATA_TYPE *xb; // same, but inside a residual branch (dim, seq_len)
-    DATA_TYPE *xb2; // an additional buffer just for convenience (dim, seq_len)
-    DATA_TYPE *hb; // buffer for hidden dimension in the ffn (hidden_dim, seq_len)
-    DATA_TYPE *hb2; // buffer for hidden dimension in the ffn (hidden_dim, seq_len)
-    DATA_TYPE *q; // query (dim, seq_len)
-    DATA_TYPE *k; // key (dim, seq_len)
-    DATA_TYPE *v; // value (dim, seq_len)
-    DATA_TYPE *att; // buffer for scores/attention values (n_heads, seq_len)
-    DATA_TYPE *f; // features from encoder (dim, encoder_seq_len)
-    DATA_TYPE *f_embed; // features from encoder (dim, encoder_seq_len)
-    DATA_TYPE *target; // target to output embed (dim, seq_len)
+  DATA_TYPE* x;    // activation at current time stamp (dim, seq_len)
+  DATA_TYPE* xb;   // same, but inside a residual branch (dim, seq_len)
+  DATA_TYPE* xb2;  // an additional buffer just for convenience (dim, seq_len)
+  DATA_TYPE* hb;   // buffer in the ffn (hidden_dim, seq_len)
+  DATA_TYPE* hb2;  // buffer in the ffn (hidden_dim, seq_len)
+  DATA_TYPE* q;    // query (dim, seq_len)
+  DATA_TYPE* k;    // key (dim, seq_len)
+  DATA_TYPE* v;    // value (dim, seq_len)
+  DATA_TYPE* att;  // buffer for scores/attention values (n_heads, seq_len)
+  DATA_TYPE* f;    // features from encoder (dim, encoder_seq_len)
+  DATA_TYPE* f_embed;  // features from encoder (dim, encoder_seq_len)
+  DATA_TYPE* target;   // target to output embed (dim, seq_len)
 } DecoderRunState;
 
-/* Transformer Output RunState */
 typedef struct {
-    // current wave of activations
-    DATA_TYPE *x; // (num_boxes, dim)
-    DATA_TYPE *xb; // (num_boxes, dim)
-    DATA_TYPE *classes; // (num_boxes, num_classes)
-    DATA_TYPE *bbox; // (num_boxes, 4)
+  DATA_TYPE* x;        // (dim, seq_len)
+  DATA_TYPE* xb;       // (dim, seq_len)
+  DATA_TYPE* classes;  // (num_classes, seq_len)
+  DATA_TYPE* bbox;     // (4, seq_len)
 } OutputRunState;
 
-/*
-* DETR model
-*/
+//**************************************
+// DETR model weight file header
+//**************************************
 
-typedef struct{
-    DETRConfig config;
-    DETRWeights weights;
-    /* for binary file */
-    FILE *weight_fp;
-    void *weight_mmap;
+typedef struct {
+  uint32_t id;
+  uint32_t data_type;
+  uint32_t data_offset;
+  uint32_t data_size;
+  uint32_t name_offset;
+  uint32_t name_size;
+} TensorInfo;
+
+typedef struct {
+  uint32_t version;
+  uint32_t num_tensor;
+  uint32_t pack_method;
+  uint32_t info_offset;
+  uint32_t name_offset;
+  uint32_t data_offset;
+} TensorFile;
+
+//**************************************
+// DETR model structure
+//**************************************
+
+typedef struct {
+  DETRConfig config;       // model configuration
+  DETRWeights weights;     // model weights
+  FILE* weight_fp;         // file pointer
+  void* weight_mmap;       // memory mapped file pointer
+  size_t mmap_size;        // size of the memory mapped file
+  TensorFile file_header;  // file header for weights search
 } DETR;
 
-/*
- * Utils
- */
-
+//**************************************
+// JSON and Config Parsing
+//**************************************
 int extract_int_value(const char* key, const char* json);
 char* load_json_file(const char* filename);
 void parse_conv_config(const char* section, ConvConfig* config);
@@ -260,60 +284,82 @@ void parse_maxpool_config(const char* section, MaxPoolConfig* config);
 
 int load_config(const char* filename, DETR* detr);
 void free_config(DETR* detr);
-int load_weight(const char* filename, DETR* detr);
+
+//**************************************
+// Tensor and Weights Management
+//**************************************
+void* find_tensor(const char* name, DETR* detr);
+int generate_mask_and_pos_embedding(DETR* detr);
+
+int load_weights(const char* filename, DETR* detr);
 void free_weights(DETR* detr);
 
-/*
- *  API
- */
-void print_conv_config(int level, const char* name, const ConvConfig *config);
-void print_config(DETRConfig *config);
+//**************************************
+// DETR Model API
+//**************************************
+void print_conv_config(int level, const char* name, const ConvConfig* config);
+void print_config(DETRConfig* config);
+
 int init_detr(DETR* detr, const char* config_file, const char* weights_file);
 void free_detr(DETR* detr);
 
 void print_result(OutputRunState* result);
 
-/*
- *  Runstate
- */
+//**************************************
+// Tensor Memory Management
+//**************************************
+void malloc_conv2D_tensor(ConvolutionTensor* r);
+void free_conv2D_tensor(ConvolutionTensor* r);
 
-/* malloc and free of ConvolutionRunState */
-void malloc_conv2D_run_state(ConvolutionRunState* r);
-void free_conv2D_run_state(ConvolutionRunState* r);
-/* malloc and free of EncoderRunState */
-void malloc_encoder_run_state(const TransformerConfig* config, EncoderRunState* r);
+void malloc_output_tensor(OutputTensor* r);
+void free_output_tensor(OutputTensor* r);
+
+//**************************************
+// Runstate Memory Management
+//**************************************
+void malloc_encoder_run_state(const TransformerConfig* config,
+                              EncoderRunState* r);
 void free_encoder_run_state(EncoderRunState* r);
-/* malloc and free of DecoderRunState */
-void malloc_decoder_run_state(const TransformerConfig* config, DecoderRunState* r);
+
+void malloc_decoder_run_state(const TransformerConfig* config,
+                              DecoderRunState* r);
 void free_decoder_run_state(DecoderRunState* r);
-/* malloc and free of OutputRunState */
+
 void malloc_output_run_state(const DETRConfig* config, OutputRunState* r);
 void free_output_run_state(OutputRunState* r);
 
-/*
- * model inference
- */
-void forward(DETR* detr, ConvolutionRunState* image, OutputRunState* result);
-void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights, ConvolutionRunState* image, ConvolutionRunState* result);
-void forward_encoder(TransformerConfig* c, EncoderWeights* w, EncoderRunState* r);
-void forward_decoder(TransformerConfig* c, DecoderWeights* w, DecoderRunState* r);
+//**************************************
+// Model Inference
+//**************************************
+void forward(DETR* detr, ConvolutionTensor* image, OutputTensor* result);
+void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
+                      ConvolutionTensor* image, ConvolutionTensor* result);
+void forward_encoder(TransformerConfig* c, EncoderWeights* w,
+                     EncoderRunState* r);
+void forward_decoder(TransformerConfig* c, DecoderWeights* w,
+                     DecoderRunState* r);
 void forward_output(DETRConfig* c, OutputEmbedWeights* w, OutputRunState* r);
-/*
- *  Operations
- */
- void conv2D(ConvolutionRunState *output, const ConvolutionRunState *input, const ConvConfig *config, const ConvWeights *weights);
- void maxpooling2D(ConvolutionRunState *output, const ConvolutionRunState *input, const MaxPoolConfig* config);
- void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n, int dim);
- void batchnorm2D(ConvolutionRunState *output, const ConvolutionRunState *input, BatchNormWeights *bn);
- void gemm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n, int id, int od);
- void add(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* y, int size);
 
- /*
- *  Activation Function
- */
+//**************************************
+// Operations
+//**************************************
+void conv2D(ConvolutionTensor* output, const ConvolutionTensor* input,
+            const ConvConfig* config, const ConvWeights* weights);
+void maxpooling2D(ConvolutionTensor* output, const ConvolutionTensor* input,
+                  const MaxPoolConfig* config);
+void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
+               int dim);
+void batchnorm2D(ConvolutionTensor* output, const ConvolutionTensor* input,
+                 BatchNormWeights* bn);
+void gemm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
+          int id, int od);
+void add(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* y, int size);
+
+//**************************************
+// Activation Functions
+//**************************************
 void relu(DATA_TYPE* out, DATA_TYPE* x, int size);
 void softmax(DATA_TYPE* out, DATA_TYPE* x, int size);
 void sigmoid(DATA_TYPE* out, DATA_TYPE* x, int size);
 
-
-#endif // MODEL_H
+#endif  // MODEL_H
