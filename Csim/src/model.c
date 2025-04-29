@@ -66,6 +66,51 @@
     snprintf(NAME_BUFFER, NAME_BUFFER_SIZE, fmt, ##__VA_ARGS__); \
     (ptr) = (type*)find_tensor(NAME_BUFFER, model);              \
   } while (0)
+
+// DUMP_TENSOR is a macro to dump a tensor to a file
+#define DUMP_TENSOR_DIR "debug/"
+#define BACKBONE_NAME "backbone.0.body"
+#define DECODER_NAME "transformer.decoder"
+#define ENCODER_NAME "transformer.encoder"
+
+
+#ifdef DEBUG
+#define DUMP_TENSOR(ptr, type, size, fmt, ...)                  \
+  do {                                                           \
+    char NAME_BUFFER[NAME_BUFFER_SIZE];                          \
+    snprintf(NAME_BUFFER, NAME_BUFFER_SIZE, "%s"fmt, DUMP_TENSOR_DIR ,##__VA_ARGS__); \
+    dump_tensor(NAME_BUFFER, (type*)ptr, size);                        \
+  } while (0)
+#else
+#define DUMP_TENSOR(ptr, type, size, fmt, ...)
+#endif
+/*
+ * ============================
+ * DEBUG API
+ * ============================
+ */
+
+void dump_tensor(const char* name, const DATA_TYPE* tensor, int size){
+  FILE* fp = fopen(name, "wb");
+  if (!fp) {
+    fprintf(stderr, "%s:%d %s(): open file failed: %s\n", __FILE__, __LINE__, __func__, name);
+    exit(EXIT_FAILURE);
+  }
+
+  size_t chunk_size = 1024; // Define a chunk size to write in smaller pieces
+  size_t remaining = size;
+  const DATA_TYPE* current_ptr = tensor;
+
+  size_t write_out = fwrite(tensor, sizeof(DATA_TYPE), size, fp);
+  if (write_out != size) {
+    fprintf(stderr, "%s:%d %s(): write file failed: %s\n", __FILE__, __LINE__, __func__, name);
+    fprintf(stderr, "%s:%d %s(): expected to write = %d, but wrote = %zu\n", __FILE__, __LINE__, __func__, size, write_out);
+    exit(EXIT_FAILURE);
+  }
+  DEBUG_LOG("Tensor: %s, size = %d", name, size);
+  fclose(fp);
+}
+
 /*
  * ============================
  * Utility Functions
@@ -462,154 +507,164 @@ int load_weight(const char* filename, DETR* detr) {
   DATA_TYPE* in_proj_bias;
 
   // transformer
-  MALLOC(weights->encoder, EncoderWeights, n_encoder_layers);
+
+  weights->encoder.pos_embedding =
+      weights->preprocess.pos_embedding;  // (dim, seq_len)
+  // weights for matmuls. note dim == n_heads * head_size
+
+  weights->encoder.att_mask =
+      weights->preprocess.att_mask;  // (seq_len)
+
+  MALLOC(weights->encoder.layer, EncoderLayerWeights, n_encoder_layers);
   for (int i = 0; i < n_encoder_layers; i++) {
-
-    weights->encoder[i].pos_embedding =
-        weights->preprocess.pos_embedding;  // (seq_len, dim)
-    // weights for matmuls. note dim == n_heads * head_size
-
-    weights->encoder[i].att_mask =
-        weights->preprocess.att_mask;  // (seq_len, seq_len)
-
     // in_proj_weight, bias
     FIND_TENSOR(detr, in_proj_weight, DATA_TYPE,
                 "transformer.encoder.layers.%d.self_attn.in_proj_weight", i);
 
-    weights->encoder[i].wq =
+    weights->encoder.layer[i].wq =
         in_proj_weight;  // (layer, dim, n_heads * head_size)
-    weights->encoder[i].wk =
+    weights->encoder.layer[i].wk =
         in_proj_weight + dim * dim;  // (layer, dim,  n_heads * head_size)
-    weights->encoder[i].wv =
+    weights->encoder.layer[i].wv =
         in_proj_weight + 2 * dim * dim;  // (layer, dim,  n_heads * head_size)
 
     FIND_TENSOR(detr, in_proj_bias, DATA_TYPE,
                 "transformer.encoder.layers.%d.self_attn.in_proj_bias", i);
 
-    weights->encoder[i].bq = in_proj_bias;            // (layer, dim)
-    weights->encoder[i].bk = in_proj_bias + dim;      // (layer, dim)
-    weights->encoder[i].bv = in_proj_bias + 2 * dim;  // (layer, dim)
+    weights->encoder.layer[i].bq = in_proj_bias;            // (layer, dim)
+    weights->encoder.layer[i].bk = in_proj_bias + dim;      // (layer, dim)
+    weights->encoder.layer[i].bv = in_proj_bias + 2 * dim;  // (layer, dim)
 
     // out proj
-    FIND_TENSOR(detr, weights->encoder[i].wo, DATA_TYPE,
+    FIND_TENSOR(detr, weights->encoder.layer[i].wo, DATA_TYPE,
                 "transformer.encoder.layers.%d.self_attn.out_proj.weight",
                 i);  // (layer, dim,  dim)
 
-    FIND_TENSOR(detr, weights->encoder[i].bo, DATA_TYPE,
+    FIND_TENSOR(detr, weights->encoder.layer[i].bo, DATA_TYPE,
                 "transformer.encoder.layers.%d.self_attn.out_proj.bias",
                 i);  // (layer, dim)
 
     // weights for layernorm
-    FIND_TENSOR(detr, weights->encoder[i].wln1, DATA_TYPE,
+    FIND_TENSOR(detr, weights->encoder.layer[i].wln1, DATA_TYPE,
                 "transformer.encoder.layers.%d.norm1.weight",
                 i);  // (layer, dim)
-    FIND_TENSOR(detr, weights->encoder[i].bln1, DATA_TYPE,
+    FIND_TENSOR(detr, weights->encoder.layer[i].bln1, DATA_TYPE,
                 "transformer.encoder.layers.%d.norm1.bias", i);  // (layer, dim)
-    FIND_TENSOR(detr, weights->encoder[i].wln2, DATA_TYPE,
+    FIND_TENSOR(detr, weights->encoder.layer[i].wln2, DATA_TYPE,
                 "transformer.encoder.layers.%d.norm2.weight",
                 i);  // (layer, dim)
-    FIND_TENSOR(detr, weights->encoder[i].bln2, DATA_TYPE,
+    FIND_TENSOR(detr, weights->encoder.layer[i].bln2, DATA_TYPE,
                 "transformer.encoder.layers.%d.norm2.bias", i);  // (layer, dim)
     // weights for ffn
-    FIND_TENSOR(detr, weights->encoder[i].w1, DATA_TYPE,
+    FIND_TENSOR(detr, weights->encoder.layer[i].w1, DATA_TYPE,
                 "transformer.encoder.layers.%d.linear1.weight",
                 i);  // (layer, dim, hidden_dim)
-    FIND_TENSOR(detr, weights->encoder[i].b1, DATA_TYPE,
+    FIND_TENSOR(detr, weights->encoder.layer[i].b1, DATA_TYPE,
                 "transformer.encoder.layers.%d.linear1.bias",
                 i);  // (layer, hidden_dim)
-    FIND_TENSOR(detr, weights->encoder[i].w2, DATA_TYPE,
+    FIND_TENSOR(detr, weights->encoder.layer[i].w2, DATA_TYPE,
                 "transformer.encoder.layers.%d.linear2.weight",
                 i);  // (layer, hidden_dim, dim)
-    FIND_TENSOR(detr, weights->encoder[i].b2, DATA_TYPE,
+    FIND_TENSOR(detr, weights->encoder.layer[i].b2, DATA_TYPE,
                 "transformer.encoder.layers.%d.linear2.bias",
                 i);  // (layer, dim)
   }
-  MALLOC(weights->decoder, DecoderWeights, n_decoder_layers);
+  // position embedding
+  weights->decoder.pos_embedding =
+  weights->preprocess.pos_embedding;  // (dim, seq_len)
+
+  weights->decoder.att_mask =
+  weights->preprocess.att_mask;  // (seq_len)
+
+  // query position embedding
+  FIND_TENSOR(detr, weights->decoder.query_pos_embedding, DATA_TYPE,
+    "query_embed.weight");  // (seq_len, dim)
+
+  FIND_TENSOR(detr, weights->decoder.wln, DATA_TYPE,
+    "transformer.decoder.norm.weight");  // (dim)
+
+  FIND_TENSOR(detr, weights->decoder.bln, DATA_TYPE,
+    "transformer.decoder.norm.bias");  // (dim)
+
+  MALLOC(weights->decoder.layer, DecoderLayerWeights, n_decoder_layers);
   for (int i = 0; i < n_decoder_layers; i++) {
-    // position embedding
-    weights->decoder[i].pos_embedding =
-        weights->preprocess.pos_embedding;  // (seq_len, dim)
     // weights for matmuls. note dim == n_heads * head_size
     FIND_TENSOR(detr, in_proj_weight, DATA_TYPE,
                 "transformer.decoder.layers.%d.self_attn.in_proj_weight", i);
-    weights->decoder[i].wq =
+    weights->decoder.layer[i].wq =
         in_proj_weight;  // (layer, dim, n_heads * head_size)
-    weights->decoder[i].wk =
+    weights->decoder.layer[i].wk =
         in_proj_weight + dim * dim;  // (layer, dim,  n_heads * head_size)
-    weights->decoder[i].wv =
+    weights->decoder.layer[i].wv =
         in_proj_weight + 2 * dim * dim;  // (layer, dim,  n_heads * head_size)
 
     FIND_TENSOR(detr, in_proj_bias, DATA_TYPE,
                 "transformer.decoder.layers.%d.self_attn.in_proj_bias", i);
-    weights->decoder[i].bq = in_proj_bias;            // (layer, dim)
-    weights->decoder[i].bk = in_proj_bias + dim;      // (layer, dim)
-    weights->decoder[i].bv = in_proj_bias + 2 * dim;  // (layer, dim)
+    weights->decoder.layer[i].bq = in_proj_bias;            // (layer, dim)
+    weights->decoder.layer[i].bk = in_proj_bias + dim;      // (layer, dim)
+    weights->decoder.layer[i].bv = in_proj_bias + 2 * dim;  // (layer, dim)
 
-    FIND_TENSOR(detr, weights->decoder[i].wo, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].wo, DATA_TYPE,
                 "transformer.decoder.layers.%d.self_attn.out_proj.weight",
                 i);  //  (layer, dim,  dim)
 
-    FIND_TENSOR(detr, weights->decoder[i].bo, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].bo, DATA_TYPE,
                 "transformer.decoder.layers.%d.self_attn.out_proj.bias",
                 i);  // (layer, dim)
-
-    // query position embedding
-    FIND_TENSOR(detr, weights->decoder[i].query_pos_embedding, DATA_TYPE,
-                "query_embed.weight");  // (seq_len, dim)
 
     // weights for matmuls. note dim == n_heads * head_size
     FIND_TENSOR(detr, in_proj_weight, DATA_TYPE,
                 "transformer.decoder.layers.%d.multihead_attn.in_proj_weight",
                 i);
 
-    weights->decoder[i].wq2 =
+    weights->decoder.layer[i].wq2 =
         in_proj_weight;  // (layer, dim, n_heads * head_size)
-    weights->decoder[i].wk2 =
+    weights->decoder.layer[i].wk2 =
         in_proj_weight + dim * dim;  // (layer, dim,  n_heads * head_size)
-    weights->decoder[i].wv2 =
+    weights->decoder.layer[i].wv2 =
         in_proj_weight + 2 * dim * dim;  // (layer, dim,  n_heads * head_size)
 
     FIND_TENSOR(detr, in_proj_bias, DATA_TYPE,
                 "transformer.decoder.layers.%d.multihead_attn.in_proj_bias", i);
 
-    weights->decoder[i].bq2 = in_proj_bias;            // (layer, dim)
-    weights->decoder[i].bk2 = in_proj_bias + dim;      // (layer, dim)
-    weights->decoder[i].bv2 = in_proj_bias + 2 * dim;  // (layer, dim)
+    weights->decoder.layer[i].bq2 = in_proj_bias;            // (layer, dim)
+    weights->decoder.layer[i].bk2 = in_proj_bias + dim;      // (layer, dim)
+    weights->decoder.layer[i].bv2 = in_proj_bias + 2 * dim;  // (layer, dim)
 
-    FIND_TENSOR(detr, weights->decoder[i].wo2, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].wo2, DATA_TYPE,
                 "transformer.decoder.layers.%d.multihead_attn.out_proj.weight",
                 i);
 
-    FIND_TENSOR(detr, weights->decoder[i].bo2, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].bo2, DATA_TYPE,
                 "transformer.decoder.layers.%d.multihead_attn.out_proj.bias",
                 i);
     // weights for layernorm
-    FIND_TENSOR(detr, weights->decoder[i].wln1, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].wln1, DATA_TYPE,
                 "transformer.decoder.layers.%d.norm1.weight",
                 i);  // (layer, dim)
-    FIND_TENSOR(detr, weights->decoder[i].bln1, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].bln1, DATA_TYPE,
                 "transformer.decoder.layers.%d.norm1.bias", i);  // (layer, dim)
-    FIND_TENSOR(detr, weights->decoder[i].wln2, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].wln2, DATA_TYPE,
                 "transformer.decoder.layers.%d.norm2.weight",
                 i);  // (layer, dim)
-    FIND_TENSOR(detr, weights->decoder[i].bln2, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].bln2, DATA_TYPE,
                 "transformer.decoder.layers.%d.norm2.bias", i);  // (layer, dim)
-    FIND_TENSOR(detr, weights->decoder[i].wln3, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].wln3, DATA_TYPE,
                 "transformer.decoder.layers.%d.norm3.weight",
                 i);  // (layer, dim)
-    FIND_TENSOR(detr, weights->decoder[i].bln3, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].bln3, DATA_TYPE,
                 "transformer.decoder.layers.%d.norm3.bias", i);  // (layer, dim)
     // weights for ffn
-    FIND_TENSOR(detr, weights->decoder[i].w1, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].w1, DATA_TYPE,
                 "transformer.decoder.layers.%d.linear1.weight",
                 i);  // (layer, dim, hidden_dim)
-    FIND_TENSOR(detr, weights->decoder[i].b1, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].b1, DATA_TYPE,
                 "transformer.decoder.layers.%d.linear1.bias",
                 i);  // (layer, hidden_dim)
-    FIND_TENSOR(detr, weights->decoder[i].w2, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].w2, DATA_TYPE,
                 "transformer.decoder.layers.%d.linear2.weight",
                 i);  // (layer, hidden_dim, dim)
-    FIND_TENSOR(detr, weights->decoder[i].b2, DATA_TYPE,
+    FIND_TENSOR(detr, weights->decoder.layer[i].b2, DATA_TYPE,
                 "transformer.decoder.layers.%d.linear2.bias",
                 i);  // (layer, dim)
   }
@@ -706,14 +761,23 @@ void free_weights(DETR* detr) {
   if (!weights)
     return;
 
-  if (weights->encoder) {
-    free(weights->encoder);
-    weights->encoder = NULL;
+  if(weights->preprocess.att_mask) {
+    free(weights->preprocess.att_mask);
+    weights->preprocess.att_mask = NULL;
+  }
+  if(weights->preprocess.pos_embedding) {
+    free(weights->preprocess.pos_embedding);
+    weights->preprocess.pos_embedding = NULL;
   }
 
-  if (weights->decoder) {
-    free(weights->decoder);
-    weights->decoder = NULL;
+  if (weights->encoder.layer) {
+    free(weights->encoder.layer);
+    weights->encoder.layer = NULL;
+  }
+
+  if (weights->decoder.layer) {
+    free(weights->decoder.layer);
+    weights->decoder.layer = NULL;
   }
 
   // Loop through each resblock
@@ -744,6 +808,68 @@ void free_weights(DETR* detr) {
   /* close file */
   if (detr->weight_fp)
     fclose(detr->weight_fp);
+}
+
+/**
+ * Loads an input tensor from a file.
+ *
+ * @param r The ConvolutionTensor to load the data into.
+ * @param filename The name of the tensor to load.
+ */
+void load_input_tensor(ConvolutionTensor* r, const char* filename){
+  FILE* fp = fopen(filename, "rb");
+  if (!fp) {
+    fprintf(stderr, "Failed to open file: %s\n", filename);
+    return;
+  }
+  size_t read_size = fread(r->x, sizeof(DATA_TYPE), CONV_SIZE(*r), fp);
+  if (read_size != CONV_SIZE(*r)) {
+    fprintf(stderr, "Failed to read tensor data from file: %s\n", filename);
+    fclose(fp);
+    return;
+  }
+  fclose(fp);
+  DEBUG_LOG("Loaded input tensor from file: %s", filename);
+}
+
+/**
+  * Saves the output tensor to a file.
+  *
+  * @param r The OutputTensor to save.
+  * @param boxes_filename The name of the boxes tensor to save.
+  * @param logits_filename The name of the logits tensor to save.
+  */
+
+void save_output_tensor(OutputTensor* r, const char* boxes_filename, const char* logits_filename){
+  FILE* fp = fopen(logits_filename, "wb");
+  if (!fp) {
+    fprintf(stderr, "Failed to open file: %s\n", logits_filename);
+    return;
+  }
+  size_t write_size = fwrite(r->classes, sizeof(DATA_TYPE),
+                              r->num_boxes * r->num_classes, fp);
+  if (write_size != r->num_boxes * r->num_classes) {
+    fprintf(stderr, "Failed to write tensor data to file: %s\n", logits_filename);
+    fclose(fp);
+    return;
+  }
+  fclose(fp);
+
+  fp = fopen(boxes_filename, "wb");
+  if (!fp) {
+    fprintf(stderr, "Failed to open file: %s\n", boxes_filename);
+    return;
+  }
+  write_size = fwrite(r->bbox, sizeof(DATA_TYPE), r->num_boxes * BBOX_COORDS,
+                      fp);
+  if (write_size != r->num_boxes * BBOX_COORDS) {
+    fprintf(stderr, "Failed to write tensor data to file: %s\n", boxes_filename);
+    fclose(fp);
+    return;
+  }
+  fclose(fp);
+  DEBUG_LOG("Saved output logits tensor to file: %s", logits_filename);
+  DEBUG_LOG("Saved output boxes tensor to file: %s", boxes_filename);
 }
 
 /*
@@ -938,7 +1064,6 @@ void malloc_decoder_run_state(const TransformerConfig* config,
 
   MALLOC(r->f, DATA_TYPE, dim * encoder_seq_len);
   MALLOC(r->f_embed, DATA_TYPE, dim * encoder_seq_len);
-  MALLOC(r->target, DATA_TYPE, dim * seq_len);
 }
 
 /**
@@ -969,8 +1094,6 @@ void free_decoder_run_state(DecoderRunState* r) {
   r->f = NULL;
   free(r->f_embed);
   r->f_embed = NULL;
-  free(r->target);
-  r->target = NULL;
 }
 
 /**
@@ -1040,18 +1163,17 @@ void forward(DETR* detr, ConvolutionTensor* image, OutputTensor* result) {
   /* CNN backbone */
   forward_resnet50(&(detr->config.resnet50), &(detr->weights.resnet50), image,
                    &resnet50_out);  // Run ResNet50
-  memcpy(resnet50_out.x, encoder_runstate.x,
+  memcpy(encoder_runstate.x, resnet50_out.x,
          CONV_SIZE(resnet50_out) * sizeof(DATA_TYPE));  // Transpose
   free_conv2D_tensor(&resnet50_out);                    // release memory
-
   /* Transformer - Encoder */
-  forward_encoder(t_cfg, detr->weights.encoder,
+  forward_encoder(t_cfg, &(detr->weights.encoder),
                   &encoder_runstate);  // Run Transformer Encoder
   feature_size = t_cfg->encoder_seq_len * t_cfg->dim * sizeof(DATA_TYPE);
-  memcpy(encoder_runstate.x, decoder_runstate.f,
+  memcpy(decoder_runstate.f, encoder_runstate.x,
          feature_size);  // feed to decoder
   /* Transformer - Decoder */
-  forward_decoder(t_cfg, detr->weights.decoder,
+  forward_decoder(t_cfg, &(detr->weights.decoder),
                   &decoder_runstate);  // Run Transformer Decoder
   feature_size = detr->config.num_boxes * t_cfg->dim * sizeof(DATA_TYPE);
   memcpy(output_runstate.x, decoder_runstate.x,
@@ -1061,14 +1183,14 @@ void forward(DETR* detr, ConvolutionTensor* image, OutputTensor* result) {
                  &output_runstate);
 
   /* copy output with Transpose (dim, n) -> (n ,dim)*/
-  for (int i = 0; i < result->num_boxes; i++) {
-    for (int j = 0; j < result->num_classes; j++) {
-      result->classes[i * result->num_classes + j] =
-          output_runstate.classes[j * result->num_classes + i];
+  for (int nb = 0; nb < result->num_boxes; nb++) {
+    for (int nc = 0; nc < result->num_classes; nc++) {
+      result->classes[nb * result->num_classes + nc] =
+          output_runstate.classes[nc * result->num_boxes + nb];
     }
-    for (int j = 0; j < BBOX_COORDS; j++) {
-      result->bbox[i * BBOX_COORDS + j] =
-          output_runstate.bbox[j * BBOX_COORDS + i];
+    for (int bc = 0; bc < BBOX_COORDS; bc++) {
+      result->bbox[nb * BBOX_COORDS + bc] =
+          output_runstate.bbox[bc * result->num_boxes + nb];
     }
   }
 
@@ -1096,6 +1218,7 @@ void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
   // 7*7 conv 2D
   DEBUG_LOG("---------------------conv1");
   conv2D(&r_1, image, &(config->conv1), &(weights->conv1));
+  DUMP_TENSOR(r_1.x, DATA_TYPE, CONV_SIZE(r_1), "%s.%s", BACKBONE_NAME, "conv1");
   batchnorm2D(&r_1, &r_1, &(weights->bn1));  // with batchnorm2D
   relu(r_1.x, r_1.x, CONV_SIZE(r_1));
   maxpooling2D(&r, &r_1, &(config->maxpool));
@@ -1108,6 +1231,9 @@ void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
       // Bottleneck
       conv2D(&r_1, &r, &(config->resblock[rb].conv[CONV_ID(nb, 0)]),
              &(weights->resblock[rb].conv[CONV_ID(nb, 0)]));
+      DUMP_TENSOR(r_1.x, DATA_TYPE, CONV_SIZE(r_1), "%s.layer%d.%d.conv1", BACKBONE_NAME, rb + 1,
+                  nb);
+
       batchnorm2D(
           &r_1, &r_1,
           &(weights->resblock[rb].bn[CONV_ID(nb, 0)]));  // with batchnorm2D
@@ -1116,6 +1242,8 @@ void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
 
       conv2D(&r_2, &r_1, &(config->resblock[rb].conv[CONV_ID(nb, 1)]),
              &(weights->resblock[rb].conv[CONV_ID(nb, 1)]));
+      DUMP_TENSOR(r_2.x, DATA_TYPE, CONV_SIZE(r_2), "%s.layer%d.%d.conv2", BACKBONE_NAME, rb + 1,
+             nb);
       batchnorm2D(
           &r_2, &r_2,
           &(weights->resblock[rb].bn[CONV_ID(nb, 1)]));  // with batchnorm2D
@@ -1124,6 +1252,8 @@ void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
 
       conv2D(&r_1, &r_2, &(config->resblock[rb].conv[CONV_ID(nb, 2)]),
              &(weights->resblock[rb].conv[CONV_ID(nb, 2)]));
+      DUMP_TENSOR(r_1.x, DATA_TYPE, CONV_SIZE(r_1), "%s.layer%d.%d.conv3", BACKBONE_NAME, rb + 1,
+                  nb);
       batchnorm2D(
           &r_1, &r_1,
           &(weights->resblock[rb].bn[CONV_ID(nb, 2)]));  // with batchnorm2D
@@ -1132,10 +1262,13 @@ void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
       if (nb == 0) {
         conv2D(&downsample, &r, &(config->resblock[rb].downsample),
                &(weights->resblock[rb].downsample));
+        DUMP_TENSOR(downsample.x, DATA_TYPE, CONV_SIZE(downsample),
+                    "%s.layer%d.0.downsample.0", BACKBONE_NAME, rb + 1);
         batchnorm2D(
             &downsample, &downsample,
             &(weights->resblock[rb].bn_downsample));  // with batchnorm2D
-
+        DUMP_TENSOR(downsample.x, DATA_TYPE, CONV_SIZE(downsample),
+                    "%s.layer%d.0.downsample", BACKBONE_NAME, rb + 1);
         CONV_SHAPE_COPY(r, r_1);
         malloc_conv2D_tensor(&r);
         add(r.x, r_1.x, downsample.x,
@@ -1150,6 +1283,7 @@ void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
   DEBUG_LOG("---------------------input_proj");
   // 1*1 conv 2D (projection)
   conv2D(result, &r, &(config->input_proj), &(weights->input_proj));
+  DUMP_TENSOR(result->x, DATA_TYPE, CONV_SIZE(*result), "input_proj");
 
   // free placeholder
   free_conv2D_tensor(&r);
@@ -1165,21 +1299,23 @@ void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
  * @param w The EncoderWeights structure.
  * @param r The EncoderRunState structure.
  */
-void forward_encoder(TransformerConfig* c, EncoderWeights* w,
+void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
                      EncoderRunState* r) {
   int dim = c->dim;
   int hidden_dim = c->hidden_dim;
   int head_size = dim / c->n_heads;
   int seq_len = c->encoder_seq_len;
-  MASK_TYPE* att_mask = w->att_mask;
+  MASK_TYPE* att_mask = ew->att_mask;
   int token_size = seq_len * dim;
+
+  EncoderLayerWeights* w = ew->layer;
 
   DATA_TYPE head_size_sqrt = sqrtf(head_size);
 
-  for (unsigned long long l = 0; l < c->n_encoder_layers; l++) {
-    DEBUG_LOG("---------------------layer = %lld", l);
+  for (int l = 0; l < c->n_encoder_layers; l++) {
+    DEBUG_LOG("---------------------layer = %d", l);
     // pos embedding
-    add(r->xb, r->x, w[l].pos_embedding, token_size);
+    add(r->xb, r->x, ew->pos_embedding, token_size);
     // q, k ,v
     gemm(r->q, r->xb, w[l].wq, w[l].bq, seq_len, dim, dim);
     gemm(r->k, r->xb, w[l].wk, w[l].bk, seq_len, dim, dim);
@@ -1199,7 +1335,7 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* w,
       for (int q = 0; q < seq_len; q++) {
         for (int k = 0; k < seq_len; k++) {
           // skip if mask is 0(false);
-          if (!att_mask[q * seq_len + k]) {
+          if (!att_mask[q] || !att_mask[k]) {
             att[q * seq_len + k] =
                 -__FLT_MAX__;  // Use large negative value for masked positions
             continue;
@@ -1209,11 +1345,10 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* w,
           for (int d = 0; d < head_size; d++) {
             score += Q[d * seq_len + q] * K[d * seq_len + k];
           }
-          att[q * seq_len + k] = score / head_size_sqrt;
+          att[q * seq_len + k] = score / head_size_sqrt;  // scale
         }
-        softmax(att + q * seq_len, att + q * seq_len, seq_len);  // softmax
+        softmax(att + q * seq_len, att + q * seq_len, seq_len);  // softmaxç
       }
-
       // output of attention = att @ V
       for (int i = 0; i < seq_len; i++) {
         for (int d = 0; d < head_size; d++) {
@@ -1225,19 +1360,33 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* w,
         }
       }
     }
+
     // output gemm
     gemm(r->xb2, r->xb, w[l].wo, w[l].bo, seq_len, dim, dim);
+    DUMP_TENSOR(r->xb2, DATA_TYPE, token_size,
+      "%s.layers.%d.self_attn", ENCODER_NAME, l);
 
     // residual connection back to x
     add(r->xb, r->x, r->xb2, token_size);
     layernorm(r->x, r->xb, w[l].wln1, w[l].bln1, seq_len, dim);
+    DUMP_TENSOR(r->x, DATA_TYPE, token_size,
+      "%s.layers.%d.norm1", ENCODER_NAME, l);
     // ffn
     gemm(r->hb, r->x, w[l].w1, w[l].b1, seq_len, dim, hidden_dim);
+    DUMP_TENSOR(r->hb, DATA_TYPE, seq_len * hidden_dim,
+        "%s.layers.%d.linear1", ENCODER_NAME, l);
     relu(r->hb2, r->hb, seq_len * hidden_dim);
     gemm(r->xb, r->hb2, w[l].w2, w[l].b2, seq_len, hidden_dim, dim);
+    DUMP_TENSOR(r->xb, DATA_TYPE, token_size,
+      "%s.layers.%d.linear2", ENCODER_NAME, l);
     // residual connection
     add(r->x, r->x, r->xb, token_size);
     layernorm(r->x, r->x, w[l].wln2, w[l].bln2, seq_len, dim);
+    DUMP_TENSOR(r->x, DATA_TYPE, token_size,
+      "%s.layers.%d.norm2", ENCODER_NAME, l);
+
+    DUMP_TENSOR(r->x, DATA_TYPE, token_size,
+        "%s.layers.%d", ENCODER_NAME, l);
   }
 }
 
@@ -1248,7 +1397,7 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* w,
  * @param w The DecoderWeights structure.
  * @param r The DecoderRunState structure.
  */
-void forward_decoder(TransformerConfig* c, DecoderWeights* w,
+void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
                      DecoderRunState* r) {
   int dim = c->dim;
   int hidden_dim = c->hidden_dim;
@@ -1257,16 +1406,19 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* w,
   int encoder_seq_len = c->encoder_seq_len;
   int token_size = seq_len * dim;
   int encoder_token_size = encoder_seq_len * dim;
+  MASK_TYPE* att_mask = dw->att_mask;
+
+  DecoderLayerWeights* w = dw->layer;
 
   DATA_TYPE head_size_sqrt = sqrtf(head_size);
 
   // decoder feature pos embedding
-  add(r->f_embed, r->f, w[0].pos_embedding, encoder_token_size);
+  add(r->f_embed, r->f, dw->pos_embedding, encoder_token_size);
 
-  for (unsigned long long l = 0; l < c->n_decoder_layers; l++) {
-    DEBUG_LOG("---------------------layer = %lld", l);
+  for (int l = 0; l < c->n_decoder_layers; l++) {
+    DEBUG_LOG("---------------------layer = %d", l);
     // query pos embedding
-    add(r->xb, r->x, w[l].query_pos_embedding, token_size);
+    add(r->xb, r->x, dw->query_pos_embedding, token_size);
     // q, k ,v
     gemm(r->q, r->xb, w[l].wq, w[l].bq, seq_len, dim, dim);
     gemm(r->k, r->xb, w[l].wk, w[l].bk, seq_len, dim, dim);
@@ -1308,13 +1460,17 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* w,
     }
     // output gemm
     gemm(r->xb2, r->xb, w[l].wo, w[l].bo, seq_len, dim, dim);
+    DUMP_TENSOR(r->xb2, DATA_TYPE, token_size,
+      "%s.layers.%d.self_attn", DECODER_NAME, l);
 
     // residual connection back to x
     add(r->xb, r->x, r->xb2, token_size);
     layernorm(r->x, r->xb, w[l].wln1, w[l].bln1, seq_len, dim);
+    DUMP_TENSOR(r->x, DATA_TYPE, token_size,
+      "%s.layers.%d.norm1", DECODER_NAME, l);
 
     // query pos embedding
-    add(r->xb, r->x, w[l].query_pos_embedding, token_size);
+    add(r->xb, r->x, dw->query_pos_embedding, token_size);
 
     // q, k ,v
     gemm(r->q, r->xb, w[l].wq2, w[l].bq2, seq_len, dim, dim);
@@ -1333,6 +1489,13 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* w,
       // q,k -> attention score
       for (int q = 0; q < seq_len; q++) {
         for (int k = 0; k < encoder_seq_len; k++) {
+          // skip if mask is 0(false);
+          if (!att_mask[k]) {
+            att[q * encoder_seq_len + k] =
+                -__FLT_MAX__;  // Use large negative value for masked positions
+            continue;
+          }
+
           DATA_TYPE score = 0;
           for (int d = 0; d < head_size; d++) {
             score += Q[d * seq_len + q] * K[d * encoder_seq_len + k];
@@ -1353,22 +1516,54 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* w,
         }
       }
     }
+
+    {
+      // attn avg
+      for(int h = 1; h < c->n_heads; h++){
+        DATA_TYPE* att = r->att + h * seq_len * encoder_seq_len;
+        for (int i = 0; i < seq_len * encoder_seq_len; i++) {
+          r->att[i] += att[i];
+        }
+      }
+      for (int i = 0; i < seq_len * encoder_seq_len; i++) {
+        r->att[i] /= c->n_heads;
+      }
+
+      DUMP_TENSOR(r->att, DATA_TYPE, seq_len * encoder_seq_len,
+        "%s.layers.%d.multihead_attn.attn", DECODER_NAME, l);
+    }
+
     // output gemm
     gemm(r->xb2, r->xb, w[l].wo2, w[l].bo2, seq_len, dim, dim);
+    DUMP_TENSOR(r->xb2, DATA_TYPE, token_size,
+      "%s.layers.%d.multihead_attn", DECODER_NAME, l);
 
     // residual connection back to x
     add(r->xb, r->x, r->xb2, token_size);
-    layernorm(r->x, r->xb, w[l].wln1, w[l].bln1, seq_len, dim);
+    layernorm(r->x, r->xb, w[l].wln2, w[l].bln2, seq_len, dim);
+    DUMP_TENSOR(r->x, DATA_TYPE, token_size,
+      "%s.layers.%d.norm2", DECODER_NAME, l);
+
     // ffn
     gemm(r->hb, r->x, w[l].w1, w[l].b1, seq_len, dim, hidden_dim);
+    DUMP_TENSOR(r->hb, DATA_TYPE, seq_len * hidden_dim,
+      "%s.layers.%d.linear1", DECODER_NAME, l);
+
     relu(r->hb2, r->hb, seq_len * hidden_dim);
     gemm(r->xb, r->hb2, w[l].w2, w[l].b2, seq_len, hidden_dim, dim);
+    DUMP_TENSOR(r->xb, DATA_TYPE, token_size,
+      "%s.layers.%d.linear2", DECODER_NAME, l);
+
     // residual connection
     add(r->x, r->x, r->xb, token_size);
-    layernorm(r->x, r->x, w[l].wln2, w[l].bln2, seq_len, dim);
+    layernorm(r->x, r->x, w[l].wln3, w[l].bln3, seq_len, dim);
+    DUMP_TENSOR(r->x, DATA_TYPE, token_size,
+      "%s.layers.%d.norm3", DECODER_NAME, l);
   }
-  // copy target
-  memcpy(r->x, r->target, token_size * sizeof(DATA_TYPE));
+  // norm
+  layernorm(r->x, r->x, dw->wln, dw->bln, seq_len, dim);
+  DUMP_TENSOR(r->x, DATA_TYPE, token_size,
+    "%s.norm", DECODER_NAME);
 }
 
 /**
@@ -1382,14 +1577,27 @@ void forward_output(DETRConfig* c, OutputEmbedWeights* w, OutputRunState* r) {
   int num_classes = c->num_classes;
   int num_boxes = c->num_boxes;
   int dim = c->transformer.dim;
+
   // classes
   gemm(r->classes, r->x, w->class_w, w->class_b, num_boxes, dim, num_classes);
+  DUMP_TENSOR(r->classes, DATA_TYPE, num_boxes * num_classes,
+    "class_embed");
+
   // bbox
   gemm(r->xb, r->x, w->bbox_w1, w->bbox_b1, num_boxes, dim, dim);
+  DUMP_TENSOR(r->xb, DATA_TYPE, num_boxes * dim,
+    "bbox_embed.layers.0");
+
   relu(r->x, r->xb, num_boxes * dim);
   gemm(r->xb, r->x, w->bbox_w2, w->bbox_b2, num_boxes, dim, dim);
+  DUMP_TENSOR(r->xb, DATA_TYPE, num_boxes * dim,
+    "bbox_embed.layers.1");
+
   relu(r->x, r->xb, num_boxes * dim);
   gemm(r->bbox, r->x, w->bbox_w3, w->bbox_b3, num_boxes, dim, BBOX_COORDS);
+  DUMP_TENSOR(r->bbox, DATA_TYPE, num_boxes * BBOX_COORDS,
+    "bbox_embed.layers.2");
+
   sigmoid(r->bbox, r->bbox, num_boxes * BBOX_COORDS);
 }
 
@@ -1549,7 +1757,7 @@ void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
 
     // Compute variance
     for (int j = 0; j < dim; j++) {
-      DATA_TYPE diff = x[i * dim + j] - mean;
+      DATA_TYPE diff = x[j * n + i] - mean;
       var += diff * diff;
     }
     var /= dim;
@@ -1557,8 +1765,8 @@ void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
 
     // Normalize + affine transform
     for (int j = 0; j < dim; j++) {
-      DATA_TYPE norm = (x[i * dim + j] - mean) * inv_std;
-      out[i * dim + j] = norm * w[j] + b[j];
+      DATA_TYPE norm = (x[j * n + i] - mean) * inv_std;
+      out[j * n + i] = norm * w[j] + b[j];
     }
   }
 }
@@ -1617,12 +1825,12 @@ void gemm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
   assert(b != NULL);
   DEBUG_LOG("W (%d, %d) @ x(%d, %d) -> xout (%d, %d)", id, od, id, n, od, n);
   // W (od, id) @ x(id, n) -> xout (od, n)
-  int i;
-  for (int i = 0; i < n * od; i++) {
-    int o = i / n;  // output dimension index
-    out[i] = b[o];
-    for (int j = 0; j < id; j++) {
-      out[i] += w[o * id + j] * x[j * n + (i % n)];
+  for(int o = 0; o < od; o++) {
+    for(int nidx = 0; nidx < n; nidx++) {
+      out[o * n + nidx] = b[o];
+      for(int i = 0; i < id; i++) {
+        out[o * n + nidx] += w[o * id + i] * x[i * n + nidx];
+      }
     }
   }
 }

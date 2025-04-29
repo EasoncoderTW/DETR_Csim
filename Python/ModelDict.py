@@ -142,6 +142,7 @@ def normal_pack(tensor_name:str, tensor:torch.Tensor)->bytes:
 
     if tensor_name == "query_embed.weight":
         tensor = tensor.transpose(0,1)
+        #print(tensor_name, tensor.shape)
 
     # print(tensor_name, tensor.shape)
 

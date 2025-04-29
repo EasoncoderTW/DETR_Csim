@@ -97,10 +97,6 @@ typedef struct {
 } ResNet50Weights;
 
 typedef struct {
-  // position embedding
-  DATA_TYPE* pos_embedding;  // (dim, seq_len)
-  // attention mask
-  MASK_TYPE* att_mask;  //(seq_len, seq_len)
   // weights for matmuls. note dim == n_heads * head_size
   DATA_TYPE* wq;  // (layer, dim, n_heads * head_size)
   DATA_TYPE* bq;  // (layer, dim)
@@ -120,13 +116,17 @@ typedef struct {
   DATA_TYPE* b1;  // (layer, hidden_dim)
   DATA_TYPE* w2;  // (layer, hidden_dim, dim)
   DATA_TYPE* b2;  // (layer, dim)
-} EncoderWeights;
+} EncoderLayerWeights;
 
-typedef struct {
+typedef struct{
   // position embedding
   DATA_TYPE* pos_embedding;  // (dim, seq_len)
-  // query position embedding
-  DATA_TYPE* query_pos_embedding;  // (dim, seq_len)
+  // attention mask
+  MASK_TYPE* att_mask;  // (seq_len)
+  EncoderLayerWeights* layer;  // layers
+}EncoderWeights;
+
+typedef struct {
   // weights for matmuls. note dim == n_heads * head_size
   DATA_TYPE* wq;  // (layer, n_heads , head_size, dim)
   DATA_TYPE* bq;  // (layer, n_heads , head_size)
@@ -157,6 +157,18 @@ typedef struct {
   DATA_TYPE* b1;  // (layer, hidden_dim)
   DATA_TYPE* w2;  // (layer, dim, hidden_dim)
   DATA_TYPE* b2;  // (layer, dim)
+} DecoderLayerWeights;
+
+typedef struct {
+  // position embedding
+  DATA_TYPE* pos_embedding;  // (dim, seq_len)
+  // query position embedding
+  DATA_TYPE* query_pos_embedding;  // (dim, seq_len)
+  // attention mask
+  MASK_TYPE* att_mask;  // (seq_len)
+  DATA_TYPE* wln;
+  DATA_TYPE* bln;
+  DecoderLayerWeights* layer;  // layers
 } DecoderWeights;
 
 typedef struct {
@@ -172,14 +184,14 @@ typedef struct {
 
 typedef struct {
   DATA_TYPE* pos_embedding;  // position embedding (dim, seq_len)
-  MASK_TYPE* att_mask;       // attention mask (seq_len, seq_len)
+  MASK_TYPE* att_mask;       // attention mask (seq_len)
 } PreprocessWeights;
 
 typedef struct {
   PreprocessWeights preprocess;    // preprocessing weights
   ResNet50Weights resnet50;        // backbone
-  EncoderWeights* encoder;         // transformer encoder
-  DecoderWeights* decoder;         // transformer decoder
+  EncoderWeights encoder;         // transformer encoder
+  DecoderWeights decoder;         // transformer decoder
   OutputEmbedWeights outputembed;  // Output Embedding
 } DETRWeights;
 
@@ -229,7 +241,6 @@ typedef struct {
   DATA_TYPE* att;  // buffer for scores/attention values (n_heads, seq_len)
   DATA_TYPE* f;    // features from encoder (dim, encoder_seq_len)
   DATA_TYPE* f_embed;  // features from encoder (dim, encoder_seq_len)
-  DATA_TYPE* target;   // target to output embed (dim, seq_len)
 } DecoderRunState;
 
 typedef struct {
@@ -275,6 +286,11 @@ typedef struct {
 } DETR;
 
 //**************************************
+// DEBUG API
+//**************************************
+void dump_tensor(const char* name, const DATA_TYPE* tensor, int size);
+
+//**************************************
 // JSON and Config Parsing
 //**************************************
 int extract_int_value(const char* key, const char* json);
@@ -293,6 +309,10 @@ int generate_mask_and_pos_embedding(DETR* detr);
 
 int load_weights(const char* filename, DETR* detr);
 void free_weights(DETR* detr);
+
+void load_input_tensor(ConvolutionTensor* r, const char* filename);
+void save_output_tensor(OutputTensor* r, const char* boxes_filename,
+                      const char* logits_filename);
 
 //**************************************
 // DETR Model API

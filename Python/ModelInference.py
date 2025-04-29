@@ -47,7 +47,7 @@ class ModelInference(object):
                     # Register a forward hook to print the output shape
                     layer.register_forward_hook(
                         # lambda module, input, output, name=layer_name: print(f"[Layer] {name} output shape: {output.shape}")
-                        lambda module, input, output, name=layer_name: self.dump_tensor(output, f"{name}.bin")
+                        lambda module, input, output, name=layer_name: self.dump_tensor(output, name)
                     )
                 except:
                     continue
@@ -133,42 +133,60 @@ class ModelInference(object):
             tensor (Any): The tensor or OrderedDict to save.
             filename (str): The name of the output file.
         """
-        if filename == ".bin":
-            filename = "Unnamed.bin"
+        if filename == "":
+            filename = "Output"
 
         #print(f"Saving tensor to {filename}")
         file_path = self.kargs.get('bin_output', "") + "/" + filename
 
-        with open(file_path, "wb") as f:
-            if isinstance(tensor, torch.Tensor):
-                # Write the shape of the tensor
-                f.write(struct.pack('I', len(tensor.shape)))
-                for dim in tensor.shape:
-                    f.write(struct.pack('I', dim))
-                # Write the data
+        if isinstance(tensor, torch.Tensor):
+            file_path = self.kargs.get('bin_output', "") + "/" + filename
+            with open(file_path, "wb") as f:
+                if filename.startswith("transformer."):
+                    # for transformer
+                    if tensor.dim() == 3:
+                        tensor = tensor.permute((2,1,0))
+                    elif tensor.dim() == 4:
+                        tensor = tensor.permute((0,2,3,1))
+
+                if filename.startswith("class_embed") or filename.startswith("bbox_embed"):
+                    tensor = tensor[-1].permute((2,1,0))
+
+                print("tensor", filename, "shape", tensor.shape)
                 f.write(tensor.numpy().tobytes())
-            elif isinstance(tensor, dict):
-                print("dict", filename)
-                # Handle OrderedDict by iterating through its items
-                for key, value in tensor.items():
-                    if isinstance(value, torch.Tensor):
-                        print("\tshape", value.shape, f"key={key}")
-                        f.write(struct.pack('I', len(value.shape)))
-                        for dim in value.shape:
-                            f.write(struct.pack('I', dim))
+
+        elif isinstance(tensor, dict):
+            print("dict", filename)
+            # Handle OrderedDict by iterating through its items
+            for key, value in tensor.items():
+                if isinstance(value, torch.Tensor):
+                    print("key", key, "shape", value.shape)
+                    file_path = self.kargs.get('bin_output', "") + "/" + filename+ "." + key
+                    with open(file_path, "wb") as f:
                         f.write(value.numpy().tobytes())
-            elif isinstance(tensor, tuple):
-                print("tuple", filename)
-                # Handle tuple by iterating through its elements
+        elif isinstance(tensor, tuple):
+            print("tuple", filename)
+            # Handle tuple by iterating through its elements
+            if filename.endswith("_attn"): # for attention
+                file_path = self.kargs.get('bin_output', "") + "/" + filename
+                tensor_0 = tensor[0].permute((2,1,0))
+                print("\ttensor", filename, "shape", tensor_0.shape)
+                with open(file_path, "wb") as f:
+                    f.write(tensor_0.numpy().tobytes())
+                file_path = self.kargs.get('bin_output', "") + "/" + filename + ".attn"
+                tensor_1 = tensor[1]#.permute((2,1,0))
+                print("\ttensor", filename+".attn", "shape", tensor_1.shape)
+                with open(file_path, "wb") as f:
+                    f.write(tensor_1.numpy().tobytes())
+            else:
                 for i, item in enumerate(tensor):
                     if isinstance(item, torch.Tensor):
                         print("\tshape", item.shape)
-                        f.write(struct.pack('I', len(item.shape)))
-                        for dim in item.shape:
-                            f.write(struct.pack('I', dim))
-                        f.write(item.numpy().tobytes())
-            else:
-                raise TypeError(f"Unsupported type ({type(tensor)}) for dump_tensor. Must be torch.Tensor or OrderedDict.")
+                        file_path = self.kargs.get('bin_output', "") + "/" + filename
+                        with open(file_path, "wb") as f:
+                            f.write(item.numpy().tobytes())
+        else:
+            raise TypeError(f"Unsupported type ({type(tensor)}) for dump_tensor. Must be torch.Tensor or OrderedDict.")
 
     def dump_input(self):
         """
@@ -191,7 +209,7 @@ class ModelInference(object):
             class_name = COCO_CLASSES[arg_max]
             score = score[arg_max]
             box = box.tolist()
-            print(f"Class: {class_name}, Score: {score:.2f}, Box: {box}")
+            print(f"Class: {class_name} ({arg_max}), Score: {score:.2f}, Box: {box}")
 
 #############
 # colors for visualization
