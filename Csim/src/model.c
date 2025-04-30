@@ -68,7 +68,10 @@
   } while (0)
 
 // DUMP_TENSOR is a macro to dump a tensor to a file
+#ifndef DUMP_TENSOR_DIR
 #define DUMP_TENSOR_DIR "debug/"
+#endif
+
 #define BACKBONE_NAME "backbone.0.body"
 #define DECODER_NAME "transformer.decoder"
 #define ENCODER_NAME "transformer.encoder"

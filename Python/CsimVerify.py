@@ -3,7 +3,7 @@ import argparse
 import numpy as np
 
 
-def verify(csim_path, golden_path, data_type):
+def verify(csim_path, golden_path, data_type, rtol, atol):
     """
     Compare tensors from csim binary with Python golden.
     :param csim_path: Path to csim binary files.
@@ -31,7 +31,7 @@ def verify(csim_path, golden_path, data_type):
                 print(f"Shape mismatch: {csim_data.shape} vs {golden_data.shape}")
                 continue
             # fp32 comparison tolerance
-            if not np.allclose(csim_data, golden_data, rtol=1e-4, atol=1e-4):
+            if not np.allclose(csim_data, golden_data, rtol=rtol, atol=atol):
                 print("Mismatch found!")
                 # Optionally, print the differences
                 diff = np.abs(csim_data - golden_data)
@@ -45,23 +45,29 @@ def parse_arguments():
     parser.add_argument('-c', '--csim', required=True, help="Path to csim binary files.")
     parser.add_argument('-g', '--golden', required=True, help="Path to Python golden binary files.")
     parser.add_argument('-dtype', '--data_type', required=True, choices=['fp32', 'fp16'], help="Data type of the tensors.")
+    parser.add_argument('-r', '--rtol', type=float, default=1e-6, help="Relative tolerance for comparison.")
+    parser.add_argument('-a', '--atol', type=float, default=1e-3, help="Absolute tolerance for comparison.")
     return parser.parse_args()
 
 def main():
     args = parse_arguments()
     csim_path = args.csim
     golden_path = args.golden
-    data_type = args.data_type
 
     if not os.path.exists(csim_path):
         raise FileNotFoundError(f"csim path '{csim_path}' does not exist.")
     if not os.path.exists(golden_path):
         raise FileNotFoundError(f"golden path '{golden_path}' does not exist.")
 
-    print(f"Verifying tensors with csim path: {csim_path}, golden path: {golden_path}, data type: {data_type}")
+    print(f"Verifying tensors:")
+    print(f"\tcsim path: {csim_path}")
+    print(f"\tgolden path: {golden_path}")
+    print(f"\tdata type: {args.data_type}")
+    print(f"\trtol: {args.rtol}")
+    print(f"\tatol: {args.atol}")
     # Add logic to compare tensors here
 
-    verify_result = verify(csim_path, golden_path, data_type)
+    verify_result = verify(csim_path, golden_path, args.data_type, args.rtol, args.atol)
 
 if __name__ == "__main__":
     main()

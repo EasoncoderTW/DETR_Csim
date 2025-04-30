@@ -35,7 +35,7 @@ class TensorInfo(dict):
         return cls(*unpacked)
 
 
-class ModelDict(object):
+class ModelWeight(object):
     DATA_TYPE = {
         "fp32": 0,
     }
@@ -97,7 +97,7 @@ class ModelDict(object):
 
             info = TensorInfo(
                         id=tensor_count,
-                        data_type = ModelDict.DATA_TYPE['fp32'],
+                        data_type = ModelWeight.DATA_TYPE['fp32'],
                         data_offset = len(data),
                         data_size = len(data_bytes),
                         name_offset = len(name),
@@ -114,7 +114,7 @@ class ModelDict(object):
         HEAD_SIZE = 24
         head += struct.pack('I',self.version) # version
         head += struct.pack('I',tensor_count) # tensor count
-        head += struct.pack('I',ModelDict.PACK_MATHED['normal']) # packmethod
+        head += struct.pack('I',ModelWeight.PACK_MATHED['normal']) # packmethod
         head += struct.pack('I',HEAD_SIZE) # info offset
         head += struct.pack('I',HEAD_SIZE+len(table)) # name offset
         head += struct.pack('I',HEAD_SIZE+len(table)+len(name)) # data offset
@@ -195,7 +195,7 @@ if __name__ == "__main__":
     print("List model weights:", args.list)
 
     model = torch.hub.load(args.repo_or_dir, args.model, pretrained=True)
-    MD = ModelDict(model)
+    MD = ModelWeight(model)
     if args.list:
         print("Model weights:")
         for name, tensor in model.state_dict().items():

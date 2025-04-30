@@ -87,16 +87,3 @@ forward
 
 ## weight binary file format
 - custom format (.bin)
-- useful format
-    ### GGUF
-    https://huggingface.co/docs/hub/en/gguf
-    https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
-
-    ### Safetensors
-    https://huggingface.co/docs/safetensors/en/index
-
-    ### Protocol Buffers
-    https://protobuf.dev/
-
-    ### FlatBuffers
-    https://flatbuffers.dev/
