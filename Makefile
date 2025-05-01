@@ -35,12 +35,25 @@ CFLAGS := -I$(CSIM_DIR)/include
 LDFLAGS := -lm
 ELF_NAME := detr
 
-.PHONY: py_gen_weights py_inference csim_verify debug test build run clean all
+ifeq ($(DEBUG), 1)
+CFLAGS += -DDEBUG
+endif
+
+ifeq ($(DUMP), 1)
+CFLAGS += -DDUMP -DDUMP_TENSOR_DIR='"$(CSIM_DEBUG_DIR)/"'
+endif
+
+ifeq ($(ANALYZE), 1)
+CFLAGS += -DANALYZE -DSTATISTICS_CSV_FILENAME='"$(OUTPUT_DIR)/statistics.csv"'
+endif
+
+.PHONY: all py_gen_weights py_inference csim_verify build run clean_csim clean_python clean debug
 
 all:
 	make py_gen_weights
 	make py_inference
-	make debug_run
+	make build DEBUG=1 DUMP=1 ANALYZE=1
+	make run
 	make csim_verify
 
 # python script for model weight generation
@@ -78,29 +91,22 @@ csim_verify:
 		--atol 1e-4
 # Csim
 debug:
-	$(CC) -DDEBUG -DDUMP_TENSOR_DIR='"$(CSIM_DEBUG_DIR)/"' -O0 \
-	-o $(ELF_NAME) \
-	$(CSIM_DIR)/detr.c $(CSIM_DIR)/src/model.c \
-	$(CFLAGS) \
-	$(LDFLAGS)
+	make build DEBUG=1 DUMP=1 ANALYZE=1
 
-release:
+build:
 	$(CC) \
-	-o $(ELF_NAME) \
-	$(CSIM_DIR)/detr.c $(CSIM_DIR)/src/model.c \
 	$(CFLAGS) \
+	$(CSIM_DIR)/detr.c $(CSIM_DIR)/src/*.c \
+	-o $(ELF_NAME) \
 	$(LDFLAGS)
 
-debug_run: debug
+run:
 	mkdir -p $(CSIM_OUTPUT_DIR)
 	mkdir -p $(CSIM_DEBUG_DIR)
 	./$(ELF_NAME) $(CONFIG_JSON) $(WEIGHT_BIN) $(INPUT_BIN) $(OUT_BOXES_BIN) $(OUT_SCORES_BIN) 1> output.log 2> debug.log
 
-run: release
-	mkdir -p $(CSIM_OUTPUT_DIR)
-	./$(ELF_NAME) $(CONFIG_JSON) $(WEIGHT_BIN) $(INPUT_BIN) $(OUT_BOXES_BIN) $(OUT_SCORES_BIN) | tee output.log
-
 clean_csim:
+	rm $(ELF_NAME)
 	rm -rf $(CSIM_OUTPUT_DIR)
 
 clean_python:
@@ -108,7 +114,6 @@ clean_python:
 
 clean: clean_csim clean_python
 	rm -rf $(OUTPUT_DIR)
-	rm -f $(ELF_NAME)
 	rm -f *.log
 
 # other targets

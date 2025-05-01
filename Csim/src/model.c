@@ -1,10 +1,13 @@
 #include "model.h"
+#include "statistic.h"
+
 #include <assert.h>
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 
 /*
  * ============================
@@ -77,7 +80,7 @@
 #define ENCODER_NAME "transformer.encoder"
 
 
-#ifdef DEBUG
+#ifdef DUMP
 #define DUMP_TENSOR(ptr, type, size, fmt, ...)                  \
   do {                                                           \
     char NAME_BUFFER[NAME_BUFFER_SIZE];                          \
@@ -87,6 +90,7 @@
 #else
 #define DUMP_TENSOR(ptr, type, size, fmt, ...)
 #endif
+
 /*
  * ============================
  * DEBUG API
@@ -1146,6 +1150,7 @@ void free_output_run_state(OutputRunState* r) {
  * @param result The output result as an OutputTensor.
  */
 void forward(DETR* detr, ConvolutionTensor* image, OutputTensor* result) {
+  STATISTICS_INIT_CSV;
   // placeholder
   ConvolutionTensor resnet50_out = CONVTENSOR_INITIALIZER;
   EncoderRunState encoder_runstate = {NULL};
@@ -1172,9 +1177,14 @@ void forward(DETR* detr, ConvolutionTensor* image, OutputTensor* result) {
   /* Transformer - Encoder */
   forward_encoder(t_cfg, &(detr->weights.encoder),
                   &encoder_runstate);  // Run Transformer Encoder
+
   feature_size = t_cfg->encoder_seq_len * t_cfg->dim * sizeof(DATA_TYPE);
   memcpy(decoder_runstate.f, encoder_runstate.x,
          feature_size);  // feed to decoder
+
+  feature_size = t_cfg->decoder_seq_len * t_cfg->dim * sizeof(DATA_TYPE);
+  memset(decoder_runstate.x, 0, feature_size); // init to zeros
+
   /* Transformer - Decoder */
   forward_decoder(t_cfg, &(detr->weights.decoder),
                   &decoder_runstate);  // Run Transformer Decoder
@@ -1315,6 +1325,8 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
 
   DATA_TYPE head_size_sqrt = sqrtf(head_size);
 
+  STATISTICS_CREATE(stat_softmax);
+  STATISTICS_CREATE(stat_self_attn);
   for (int l = 0; l < c->n_encoder_layers; l++) {
     DEBUG_LOG("---------------------layer = %d", l);
     // pos embedding
@@ -1326,6 +1338,8 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
 
     // multi-head attention. iterate over all heads
     DEBUG_LOG("multi-head attention");
+    STATISTICS_RESET(stat_softmax);
+    STATISTICS_RESET(stat_self_attn);
     for (int h = 0; h < c->n_heads; h++) {
       // get q,k,v of this head
       DATA_TYPE* Q = r->q + h * head_size * seq_len;
@@ -1341,6 +1355,7 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
           if (!att_mask[q] || !att_mask[k]) {
             att[q * seq_len + k] =
                 -__FLT_MAX__;  // Use large negative value for masked positions
+            STATISTICS_ADD_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
             continue;
           }
 
@@ -1348,9 +1363,18 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
           for (int d = 0; d < head_size; d++) {
             score += Q[d * seq_len + q] * K[d * seq_len + k];
           }
+          STATISTICS_ADD_MAC(stat_self_attn, head_size);
+          STATISTICS_ADD_MEMORY_READ(stat_self_attn, 2 * head_size * sizeof(DATA_TYPE));
+
           att[q * seq_len + k] = score / head_size_sqrt;  // scale
+          STATISTICS_ADD_MAC(stat_self_attn, 1); // div
+          STATISTICS_ADD_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
         }
-        softmax(att + q * seq_len, att + q * seq_len, seq_len);  // softmaxç
+        softmax(att + q * seq_len, att + q * seq_len, seq_len);  // softmax - threee pass
+        STATISTICS_ADD_MAC(stat_softmax, 2 * seq_len); // /, -
+        STATISTICS_ADD_NON_LINEAR_OP(stat_softmax, seq_len); // exp
+        STATISTICS_ADD_MEMORY_READ(stat_softmax, 3 * seq_len * sizeof(DATA_TYPE));
+        STATISTICS_ADD_MEMORY_WRITE(stat_softmax, 2 * seq_len * sizeof(DATA_TYPE));
       }
       // output of attention = att @ V
       for (int i = 0; i < seq_len; i++) {
@@ -1359,10 +1383,16 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
           for (int j = 0; j < seq_len; j++) {
             sum += att[i * seq_len + j] * V[d * seq_len + j];
           }
+          STATISTICS_ADD_MAC(stat_self_attn, seq_len);
+          STATISTICS_ADD_MEMORY_READ(stat_self_attn, 2 * seq_len * sizeof(DATA_TYPE));
+
           xb[d * seq_len + i] = sum;
+          STATISTICS_ADD_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
         }
       }
     }
+    STATISTICS_APPEND_CSV(stat_softmax);
+    STATISTICS_APPEND_CSV(stat_self_attn);
 
     // output gemm
     gemm(r->xb2, r->xb, w[l].wo, w[l].bo, seq_len, dim, dim);
@@ -1415,6 +1445,11 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
 
   DATA_TYPE head_size_sqrt = sqrtf(head_size);
 
+  STATISTICS_CREATE(stat_softmax_0);
+  STATISTICS_CREATE(stat_softmax_1);
+  STATISTICS_CREATE(stat_cross_attn);
+  STATISTICS_CREATE(stat_self_attn);
+
   // decoder feature pos embedding
   add(r->f_embed, r->f, dw->pos_embedding, encoder_token_size);
 
@@ -1429,6 +1464,8 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
 
     // multi-head attention 1. iterate over all heads
     DEBUG_LOG("multi-head attention 1");
+    STATISTICS_RESET(stat_softmax_0);
+    STATISTICS_RESET(stat_self_attn);
     int h;
     for (h = 0; h < c->n_heads; h++) {
       // get q,k,v of this head
@@ -1445,9 +1482,18 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
           for (int d = 0; d < head_size; d++) {
             score += Q[d * seq_len + q] * K[d * seq_len + k];
           }
+          STATISTICS_ADD_MAC(stat_self_attn, head_size);
+          STATISTICS_ADD_MEMORY_READ(stat_self_attn, 2 * head_size * sizeof(DATA_TYPE));
+
           att[q * seq_len + k] = score / head_size_sqrt;
+          STATISTICS_ADD_MAC(stat_self_attn, 1); // div
+          STATISTICS_ADD_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
         }
         softmax(att + q * seq_len, att + q * seq_len, seq_len);  // softmax
+        STATISTICS_ADD_MAC(stat_softmax_0, 2 * seq_len); // /, -
+        STATISTICS_ADD_NON_LINEAR_OP(stat_softmax_0, seq_len); // exp
+        STATISTICS_ADD_MEMORY_READ(stat_softmax_0, 3 * seq_len * sizeof(DATA_TYPE));
+        STATISTICS_ADD_MEMORY_WRITE(stat_softmax_0, 2 * seq_len * sizeof(DATA_TYPE));
       }
 
       // output of attention = att @ V
@@ -1457,10 +1503,17 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
           for (int j = 0; j < seq_len; j++) {
             sum += att[i * seq_len + j] * V[d * seq_len + j];
           }
+          STATISTICS_ADD_MAC(stat_self_attn, seq_len);
+          STATISTICS_ADD_MEMORY_READ(stat_self_attn, 2 * seq_len * sizeof(DATA_TYPE));
+
           xb[d * seq_len + i] = sum;
+          STATISTICS_ADD_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
         }
       }
     }
+    STATISTICS_APPEND_CSV(stat_softmax_0);
+    STATISTICS_APPEND_CSV(stat_self_attn);
+
     // output gemm
     gemm(r->xb2, r->xb, w[l].wo, w[l].bo, seq_len, dim, dim);
     DUMP_TENSOR(r->xb2, DATA_TYPE, token_size,
@@ -1482,6 +1535,8 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
 
     // multi-head attention 2. iterate over all heads
     DEBUG_LOG("multi-head attention 2");
+    STATISTICS_RESET(stat_softmax_1);
+    STATISTICS_RESET(stat_cross_attn);
     for (int h = 0; h < c->n_heads; h++) {
       // get q,k,v of this head
       DATA_TYPE* Q = r->q + h * head_size * seq_len;
@@ -1496,6 +1551,7 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
           if (!att_mask[k]) {
             att[q * encoder_seq_len + k] =
                 -__FLT_MAX__;  // Use large negative value for masked positions
+            STATISTICS_ADD_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
             continue;
           }
 
@@ -1503,10 +1559,19 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
           for (int d = 0; d < head_size; d++) {
             score += Q[d * seq_len + q] * K[d * encoder_seq_len + k];
           }
+          STATISTICS_ADD_MAC(stat_cross_attn, head_size);
+          STATISTICS_ADD_MEMORY_READ(stat_cross_attn, 2 * head_size * sizeof(DATA_TYPE));
+
           att[q * encoder_seq_len + k] = score / head_size_sqrt;
+          STATISTICS_ADD_MAC(stat_cross_attn, 1); // div
+          STATISTICS_ADD_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
         }
         softmax(att + q * encoder_seq_len, att + q * encoder_seq_len,
                 encoder_seq_len);  // softmax
+        STATISTICS_ADD_MAC(stat_softmax_1, 2 * encoder_seq_len); // /, -
+        STATISTICS_ADD_NON_LINEAR_OP(stat_softmax_1, encoder_seq_len); // exp
+        STATISTICS_ADD_MEMORY_READ(stat_softmax_1, 3 * encoder_seq_len * sizeof(DATA_TYPE));
+        STATISTICS_ADD_MEMORY_WRITE(stat_softmax_1, 2 * encoder_seq_len * sizeof(DATA_TYPE));
       }
       // output of attention = att @ V
       for (int i = 0; i < seq_len; i++) {
@@ -1515,26 +1580,16 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
           for (int j = 0; j < encoder_seq_len; j++) {
             sum += att[i * encoder_seq_len + j] * V[d * encoder_seq_len + j];
           }
+          STATISTICS_ADD_MAC(stat_cross_attn, encoder_seq_len);
+          STATISTICS_ADD_MEMORY_READ(stat_cross_attn, 2 * encoder_seq_len * sizeof(DATA_TYPE));
+
           xb[d * seq_len + i] = sum;
+          STATISTICS_ADD_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
         }
       }
     }
-
-    {
-      // attn avg
-      for(int h = 1; h < c->n_heads; h++){
-        DATA_TYPE* att = r->att + h * seq_len * encoder_seq_len;
-        for (int i = 0; i < seq_len * encoder_seq_len; i++) {
-          r->att[i] += att[i];
-        }
-      }
-      for (int i = 0; i < seq_len * encoder_seq_len; i++) {
-        r->att[i] /= c->n_heads;
-      }
-
-      DUMP_TENSOR(r->att, DATA_TYPE, seq_len * encoder_seq_len,
-        "%s.layers.%d.multihead_attn.attn", DECODER_NAME, l);
-    }
+    STATISTICS_APPEND_CSV(stat_softmax_1);
+    STATISTICS_APPEND_CSV(stat_cross_attn);
 
     // output gemm
     gemm(r->xb2, r->xb, w[l].wo2, w[l].bo2, seq_len, dim, dim);
@@ -1643,6 +1698,7 @@ void conv2D(ConvolutionTensor* output, const ConvolutionTensor* input,
             config->in_channels, config->out_channels, config->kernel_size,
             config->kernel_size, config->stride, config->padding);
 
+  STATISTICS_CREATE(stat);
   // Perform convolution (channels, height, width)
   for (int oh = 0; oh < output_height; ++oh) {
     for (int ow = 0; ow < output_width; ++ow) {
@@ -1666,6 +1722,10 @@ void conv2D(ConvolutionTensor* output, const ConvolutionTensor* input,
                                      config->kernel_size, oc, ic, r, c);
                 // 1 MACs
                 sum += (input->x[x_idx] * weights->weight[w_idx]);
+                // statistics
+                STATISTICS_ADD_MAC(stat, 1);
+                STATISTICS_ADD_MEMORY_READ(stat, 2 * sizeof(DATA_TYPE));
+                STATISTICS_ADD_MEMORY_WRITE(stat, 1 * sizeof(DATA_TYPE));
               }
             }
           }
@@ -1676,6 +1736,7 @@ void conv2D(ConvolutionTensor* output, const ConvolutionTensor* input,
       }
     }
   }
+  STATISTICS_APPEND_CSV(stat);
 }
 
 /**
@@ -1700,6 +1761,7 @@ void maxpooling2D(ConvolutionTensor* output, const ConvolutionTensor* input,
   output->channels = input->channels;
   malloc_conv2D_tensor(output);
 
+  STATISTICS_CREATE(stat);
   for (int h = 0; h < height; ++h) {
     for (int w = 0; w < width; ++w) {
       for (int ch = 0; ch < input->channels; ++ch) {
@@ -1716,17 +1778,26 @@ void maxpooling2D(ConvolutionTensor* output, const ConvolutionTensor* input,
 
               DATA_TYPE value = input->x[CONVTENSOR_INDEX(
                   input->height, input->width, ch, in_h, in_w)];
+
+
+              STATISTICS_ADD_MEMORY_READ(stat, 1 * sizeof(DATA_TYPE));
+
               if (value > max_value) {
                 max_value = value;
               }
+              // statistics
+              STATISTICS_ADD_NON_LINEAR_OP(stat, 1);
             }
           }
         }
 
         output->x[CONVTENSOR_INDEX(height, width, ch, h, w)] = max_value;
+        // statistics
+        STATISTICS_ADD_MEMORY_WRITE(stat, 1 * sizeof(DATA_TYPE));
       }
     }
   }
+  STATISTICS_APPEND_CSV(stat);
 }
 
 /**
@@ -1748,6 +1819,7 @@ void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
   DEBUG_LOG("n = %d, dim = %d", n, dim);
   const DATA_TYPE eps = 1e-5;
 
+  STATISTICS_CREATE(stat);
   for (int i = 0; i < n; i++) {
     DATA_TYPE mean = 0;
     DATA_TYPE var = 0;
@@ -1756,14 +1828,25 @@ void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
     for (int j = 0; j < dim; j++) {
       mean += x[j * n + i];
     }
+    STATISTICS_ADD_MEMORY_READ(stat, 2 * dim * sizeof(DATA_TYPE)); // x, mean
+    STATISTICS_ADD_MAC(stat, dim);
+    STATISTICS_ADD_MEMORY_WRITE(stat, dim * sizeof(DATA_TYPE)); // mean
+
     mean /= dim;
+    STATISTICS_ADD_MAC(stat, 1);
 
     // Compute variance
     for (int j = 0; j < dim; j++) {
       DATA_TYPE diff = x[j * n + i] - mean;
       var += diff * diff;
     }
+    STATISTICS_ADD_MEMORY_READ(stat, 2 * dim * sizeof(DATA_TYPE)); // x, var
+    STATISTICS_ADD_MAC(stat, dim);
+    STATISTICS_ADD_MEMORY_WRITE(stat, dim * sizeof(DATA_TYPE)); // var
+
     var /= dim;
+    STATISTICS_ADD_MAC(stat, 1);
+
     DATA_TYPE inv_std = 1.0f / sqrtf(var + eps);
 
     // Normalize + affine transform
@@ -1771,7 +1854,11 @@ void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
       DATA_TYPE norm = (x[j * n + i] - mean) * inv_std;
       out[j * n + i] = norm * w[j] + b[j];
     }
+    STATISTICS_ADD_MEMORY_READ(stat, 3 * dim * sizeof(DATA_TYPE)); // x, w, b
+    STATISTICS_ADD_MAC(stat, dim * 2);
+    STATISTICS_ADD_MEMORY_WRITE(stat, dim * sizeof(DATA_TYPE)); // out
   }
+  STATISTICS_APPEND_CSV(stat);
 }
 
 /**
@@ -1791,6 +1878,7 @@ void batchnorm2D(ConvolutionTensor* output, const ConvolutionTensor* input,
   const DATA_TYPE eps = 1e-5;
   DEBUG_LOG("input shape = (%d, %d, %d)", C, H, W);
 
+  STATISTICS_CREATE(stat);
   for (int c = 0; c < C; c++) {
     DATA_TYPE gamma = bn->weight[c];
     DATA_TYPE beta = bn->bias[c];
@@ -1800,13 +1888,21 @@ void batchnorm2D(ConvolutionTensor* output, const ConvolutionTensor* input,
     DATA_TYPE scale = gamma / sqrtf(running_var + eps);
     DATA_TYPE bias = beta - running_mean * scale;
 
+    STATISTICS_ADD_MEMORY_READ(stat, 4 * sizeof(DATA_TYPE)); // gamma, beta, mean, var
+    STATISTICS_ADD_NON_LINEAR_OP(stat, 1); // sqrtf
+    STATISTICS_ADD_MAC(stat, 2); // scale, bias
+
     for (int h = 0; h < H; h++) {
       for (int w = 0; w < W; w++) {
         int index = CONVTENSOR_INDEX(H, W, c, h, w);
         output->x[index] = input->x[index] * scale + bias;
       }
     }
+    STATISTICS_ADD_MEMORY_READ(stat, H*W*sizeof(DATA_TYPE)); // input->x
+    STATISTICS_ADD_MEMORY_WRITE(stat, H*W*sizeof(DATA_TYPE)); // output->x
+    STATISTICS_ADD_MAC(stat, H*W);
   }
+  STATISTICS_APPEND_CSV(stat);
 }
 
 /**
@@ -1828,14 +1924,19 @@ void gemm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
   assert(b != NULL);
   DEBUG_LOG("W (%d, %d) @ x(%d, %d) -> xout (%d, %d)", id, od, id, n, od, n);
   // W (od, id) @ x(id, n) -> xout (od, n)
+  STATISTICS_CREATE(stat);
   for(int o = 0; o < od; o++) {
     for(int nidx = 0; nidx < n; nidx++) {
       out[o * n + nidx] = b[o];
       for(int i = 0; i < id; i++) {
         out[o * n + nidx] += w[o * id + i] * x[i * n + nidx];
+        STATISTICS_ADD_MEMORY_READ(stat, 2 * sizeof(DATA_TYPE)); // w, x
+        STATISTICS_ADD_MEMORY_WRITE(stat, sizeof(DATA_TYPE)); // out
+        STATISTICS_ADD_MAC(stat, 1);
       }
     }
   }
+  STATISTICS_APPEND_CSV(stat);
 }
 
 /**
@@ -1851,10 +1952,15 @@ void add(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* y, int size) {
   assert(x != NULL);
   assert(y != NULL);
   DEBUG_LOG("size = %d", size);
+  STATISTICS_CREATE(stat);
   int i;
   for (i = 0; i < size; i++) {
     out[i] = x[i] + y[i];
   }
+  STATISTICS_ADD_MEMORY_READ(stat, 2 * size * sizeof(DATA_TYPE)); // x, y
+  STATISTICS_ADD_MEMORY_WRITE(stat, size * sizeof(DATA_TYPE)); // out
+  STATISTICS_ADD_MAC(stat, 2 * size);
+  STATISTICS_APPEND_CSV(stat);
 }
 
 /*
@@ -1874,10 +1980,15 @@ void relu(DATA_TYPE* out, DATA_TYPE* x, int size) {
   assert(out != NULL);
   assert(x != NULL);
   DEBUG_LOG("size = %d", size);
+  STATISTICS_CREATE(stat);
   int i;
   for (i = 0; i < size; i++) {
     out[i] = (x[i] < 0) ? 0 : x[i];
   }
+  STATISTICS_ADD_MEMORY_READ(stat, size * sizeof(DATA_TYPE)); // x
+  STATISTICS_ADD_MEMORY_WRITE(stat, size * sizeof(DATA_TYPE)); // out
+  STATISTICS_ADD_NON_LINEAR_OP(stat, size);
+  STATISTICS_APPEND_CSV(stat);
 }
 
 /**
@@ -1923,7 +2034,13 @@ void sigmoid(DATA_TYPE* out, DATA_TYPE* x, int size) {
   assert(x != NULL);
   DEBUG_LOG("size = %d", size);
   int i;
+  STATISTICS_CREATE(stat);
   for (i = 0; i < size; i++) {
     out[i] = 1 / (1 + expf(-x[i]));
   }
+  STATISTICS_ADD_MEMORY_READ(stat, size * sizeof(DATA_TYPE)); // x
+  STATISTICS_ADD_MEMORY_WRITE(stat, size * sizeof(DATA_TYPE)); // out
+  STATISTICS_ADD_NON_LINEAR_OP(stat, size);
+  STATISTICS_ADD_MAC(stat, size);
+  STATISTICS_APPEND_CSV(stat);
 }
