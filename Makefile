@@ -1,5 +1,6 @@
 CC := gcc
 PYTHON := python3
+VALGRIND := valgrind
 
 # directorys
 OUTPUT_DIR := ./output
@@ -7,6 +8,7 @@ CSIM_DIR := ./Csim
 PYTHON_DIR := ./Python
 INPUT_DIR := ./model_bundle
 IMAGE_DIR := ./demo_images
+LOG_DIR := ./log
 
 CSIM_OUTPUT_DIR := $(OUTPUT_DIR)/Csim
 CSIM_DEBUG_DIR := $(OUTPUT_DIR)/Csim/debug
@@ -103,7 +105,24 @@ build:
 run:
 	mkdir -p $(CSIM_OUTPUT_DIR)
 	mkdir -p $(CSIM_DEBUG_DIR)
-	./$(ELF_NAME) $(CONFIG_JSON) $(WEIGHT_BIN) $(INPUT_BIN) $(OUT_BOXES_BIN) $(OUT_SCORES_BIN) 1> output.log 2> debug.log
+	mkdir -p $(LOG_DIR)
+
+	./$(ELF_NAME) $(CONFIG_JSON) $(WEIGHT_BIN) $(INPUT_BIN) $(OUT_BOXES_BIN) $(OUT_SCORES_BIN) 1> $(LOG_DIR)/output.log 2> $(LOG_DIR)/debug.log
+
+valgrind:
+	mkdir -p $(CSIM_OUTPUT_DIR)
+	mkdir -p $(CSIM_DEBUG_DIR)
+	mkdir -p $(LOG_DIR)
+
+	$(VALGRIND) --tool=massif \
+	--log-file=$(LOG_DIR)/$(ELF_NAME)_massif.log \
+	--heap=yes \
+	--time-unit=i \
+	--detailed-freq=1 \
+	--max-snapshots=1000 \
+	--ignore-fn=fopen --ignore-fn=fread --ignore-fn=fwrite --ignore-fn=fclose \
+	--massif-out-file=$(LOG_DIR)/massif.out.%p_$(ELF_NAME) \
+	./$(ELF_NAME) $(CONFIG_JSON) $(WEIGHT_BIN) $(INPUT_BIN) $(OUT_BOXES_BIN) $(OUT_SCORES_BIN) 1> $(LOG_DIR)/output.log 2> $(LOG_DIR)/debug.log
 
 clean_csim:
 	rm $(ELF_NAME)
@@ -113,6 +132,7 @@ clean_python:
 	rm -rf $(PYTHON_OUTPUT_DIR)
 
 clean: clean_csim clean_python
+	rm -rf $(LOG_DIR)
 	rm -rf $(OUTPUT_DIR)
 	rm -f *.log
 

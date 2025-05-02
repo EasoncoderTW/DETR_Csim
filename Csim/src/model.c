@@ -1010,7 +1010,7 @@ void malloc_encoder_run_state(const TransformerConfig* config,
   MALLOC(r->q, DATA_TYPE, dim * seq_len);
   MALLOC(r->k, DATA_TYPE, dim * seq_len);
   MALLOC(r->v, DATA_TYPE, dim * seq_len);
-  MALLOC(r->att, DATA_TYPE, dim * seq_len * seq_len);
+  MALLOC(r->att, DATA_TYPE, n_heads * seq_len * seq_len);
 }
 
 /**
@@ -1160,42 +1160,52 @@ void forward(DETR* detr, ConvolutionTensor* image, OutputTensor* result) {
   TransformerConfig* t_cfg = &(detr->config.transformer);
   DETRConfig* cfg = &(detr->config);
 
-  // init runstate
-  DEBUG_LOG("---------------------malloc_encoder_run_state");
-  malloc_encoder_run_state(t_cfg, &encoder_runstate);
-  DEBUG_LOG("---------------------malloc_decoder_run_state");
-  malloc_decoder_run_state(t_cfg, &decoder_runstate);
-  DEBUG_LOG("---------------------malloc_output_run_state");
-  malloc_output_run_state(cfg, &output_runstate);
-
-  /* CNN backbone */
+  // Run Resnet50 backbone
+  DEBUG_LOG("--------------------- Resnet50 Backbone");
   forward_resnet50(&(detr->config.resnet50), &(detr->weights.resnet50), image,
                    &resnet50_out);  // Run ResNet50
-  memcpy(encoder_runstate.x, resnet50_out.x,
-         CONV_SIZE(resnet50_out) * sizeof(DATA_TYPE));  // Transpose
-  free_conv2D_tensor(&resnet50_out);                    // release memory
-  /* Transformer - Encoder */
-  forward_encoder(t_cfg, &(detr->weights.encoder),
-                  &encoder_runstate);  // Run Transformer Encoder
 
+  // Copy features from backbone to enocder
+  malloc_encoder_run_state(t_cfg, &encoder_runstate);
+  memcpy(encoder_runstate.x, resnet50_out.x,
+         CONV_SIZE(resnet50_out) * sizeof(DATA_TYPE));  // Copy
+  free_conv2D_tensor(&resnet50_out);                    // release memory
+
+  // Run Transformer Encoder
+  DEBUG_LOG("--------------------- Transformer - Encoder");
+  forward_encoder(t_cfg, &(detr->weights.encoder),
+                  &encoder_runstate);
+
+  // Copy features from encoder to deocder
+  malloc_decoder_run_state(t_cfg, &decoder_runstate);
   feature_size = t_cfg->encoder_seq_len * t_cfg->dim * sizeof(DATA_TYPE);
   memcpy(decoder_runstate.f, encoder_runstate.x,
-         feature_size);  // feed to decoder
+         feature_size);                               // Copy
+  free_encoder_run_state(&encoder_runstate);          // release memory
 
+  // Init decoder tokens to zeros
   feature_size = t_cfg->decoder_seq_len * t_cfg->dim * sizeof(DATA_TYPE);
-  memset(decoder_runstate.x, 0, feature_size); // init to zeros
+  memset(decoder_runstate.x, 0, feature_size);
 
-  /* Transformer - Decoder */
+  // Run Transformer Decoder
+  DEBUG_LOG("--------------------- Transformer - Decoder");
   forward_decoder(t_cfg, &(detr->weights.decoder),
-                  &decoder_runstate);  // Run Transformer Decoder
+                  &decoder_runstate);
+
+  // Copy features from decoder to output embed
+  malloc_output_run_state(cfg, &output_runstate);
   feature_size = detr->config.num_boxes * t_cfg->dim * sizeof(DATA_TYPE);
   memcpy(output_runstate.x, decoder_runstate.x,
-         feature_size);  // feed to decoder
-  /* Output Embedded */
+         feature_size);                               // Copy
+  free_decoder_run_state(&decoder_runstate);          // release memory
+
+
+  // Run Output Embedded
+  DEBUG_LOG("--------------------- Output Embedded");
   forward_output(&(detr->config), &(detr->weights.outputembed),
                  &output_runstate);
 
-  /* copy output with Transpose (dim, n) -> (n ,dim)*/
+  // copy output with Transpose (dim, n) -> (n ,dim)
   for (int nb = 0; nb < result->num_boxes; nb++) {
     for (int nc = 0; nc < result->num_classes; nc++) {
       result->classes[nb * result->num_classes + nc] =
@@ -1207,8 +1217,6 @@ void forward(DETR* detr, ConvolutionTensor* image, OutputTensor* result) {
     }
   }
 
-  free_encoder_run_state(&encoder_runstate);
-  free_decoder_run_state(&decoder_runstate);
   free_output_run_state(&output_runstate);
 }
 
@@ -1222,7 +1230,7 @@ void forward(DETR* detr, ConvolutionTensor* image, OutputTensor* result) {
  */
 void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
                       ConvolutionTensor* image, ConvolutionTensor* result) {
-  // runstate placeholder
+  // tensor placeholder
   ConvolutionTensor r = CONVTENSOR_INITIALIZER;
   ConvolutionTensor r_1 = CONVTENSOR_INITIALIZER;
   ConvolutionTensor r_2 = CONVTENSOR_INITIALIZER;
@@ -1286,11 +1294,18 @@ void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
         malloc_conv2D_tensor(&r);
         add(r.x, r_1.x, downsample.x,
             CONV_SIZE(r_1));  // add(input1, intput2, output)
+
+        // free tensor
+        free_conv2D_tensor(&downsample);
       } else {
         add(r.x, r_1.x, r.x, CONV_SIZE(r_1));  // add(input1, intput2, output)
       }
 
       relu(r.x, r.x, CONV_SIZE(r));
+
+      // free tensor
+      free_conv2D_tensor(&r_1);
+      free_conv2D_tensor(&r_2);
     }
   }
   DEBUG_LOG("---------------------input_proj");
@@ -1298,7 +1313,7 @@ void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
   conv2D(result, &r, &(config->input_proj), &(weights->input_proj));
   DUMP_TENSOR(result->x, DATA_TYPE, CONV_SIZE(*result), "input_proj");
 
-  // free placeholder
+  // free tensor
   free_conv2D_tensor(&r);
   free_conv2D_tensor(&r_1);
   free_conv2D_tensor(&r_2);
