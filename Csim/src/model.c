@@ -1370,7 +1370,7 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
           if (!att_mask[q] || !att_mask[k]) {
             att[q * seq_len + k] =
                 -__FLT_MAX__;  // Use large negative value for masked positions
-            STATISTICS_ADD_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
+            STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
             continue;
           }
 
@@ -1378,18 +1378,18 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
           for (int d = 0; d < head_size; d++) {
             score += Q[d * seq_len + q] * K[d * seq_len + k];
           }
-          STATISTICS_ADD_MAC(stat_self_attn, head_size);
-          STATISTICS_ADD_MEMORY_READ(stat_self_attn, 2 * head_size * sizeof(DATA_TYPE));
+          STATISTICS_INC_MAC(stat_self_attn, head_size);
+          STATISTICS_INC_MEMORY_READ(stat_self_attn, 2 * head_size * sizeof(DATA_TYPE));
 
           att[q * seq_len + k] = score / head_size_sqrt;  // scale
-          STATISTICS_ADD_MAC(stat_self_attn, 1); // div
-          STATISTICS_ADD_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
+          STATISTICS_INC_DIV(stat_self_attn, 1); // div
+          STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
         }
         softmax(att + q * seq_len, att + q * seq_len, seq_len);  // softmax - threee pass
-        STATISTICS_ADD_MAC(stat_softmax, 2 * seq_len); // /, -
-        STATISTICS_ADD_NON_LINEAR_OP(stat_softmax, seq_len); // exp
-        STATISTICS_ADD_MEMORY_READ(stat_softmax, 3 * seq_len * sizeof(DATA_TYPE));
-        STATISTICS_ADD_MEMORY_WRITE(stat_softmax, 2 * seq_len * sizeof(DATA_TYPE));
+        STATISTICS_INC_MAC(stat_softmax, 2 * seq_len); // /, -
+        STATISTICS_INC_NON_LINEAR_OP(stat_softmax, seq_len); // exp
+        STATISTICS_INC_MEMORY_READ(stat_softmax, 3 * seq_len * sizeof(DATA_TYPE));
+        STATISTICS_INC_MEMORY_WRITE(stat_softmax, 2 * seq_len * sizeof(DATA_TYPE));
       }
       // output of attention = att @ V
       for (int i = 0; i < seq_len; i++) {
@@ -1398,11 +1398,11 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
           for (int j = 0; j < seq_len; j++) {
             sum += att[i * seq_len + j] * V[d * seq_len + j];
           }
-          STATISTICS_ADD_MAC(stat_self_attn, seq_len);
-          STATISTICS_ADD_MEMORY_READ(stat_self_attn, 2 * seq_len * sizeof(DATA_TYPE));
+          STATISTICS_INC_MAC(stat_self_attn, seq_len);
+          STATISTICS_INC_MEMORY_READ(stat_self_attn, 2 * seq_len * sizeof(DATA_TYPE));
 
           xb[d * seq_len + i] = sum;
-          STATISTICS_ADD_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
+          STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
         }
       }
     }
@@ -1497,18 +1497,18 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
           for (int d = 0; d < head_size; d++) {
             score += Q[d * seq_len + q] * K[d * seq_len + k];
           }
-          STATISTICS_ADD_MAC(stat_self_attn, head_size);
-          STATISTICS_ADD_MEMORY_READ(stat_self_attn, 2 * head_size * sizeof(DATA_TYPE));
+          STATISTICS_INC_MAC(stat_self_attn, head_size);
+          STATISTICS_INC_MEMORY_READ(stat_self_attn, 2 * head_size * sizeof(DATA_TYPE));
 
           att[q * seq_len + k] = score / head_size_sqrt;
-          STATISTICS_ADD_MAC(stat_self_attn, 1); // div
-          STATISTICS_ADD_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
+          STATISTICS_INC_DIV(stat_self_attn, 1); // div
+          STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
         }
         softmax(att + q * seq_len, att + q * seq_len, seq_len);  // softmax
-        STATISTICS_ADD_MAC(stat_softmax_0, 2 * seq_len); // /, -
-        STATISTICS_ADD_NON_LINEAR_OP(stat_softmax_0, seq_len); // exp
-        STATISTICS_ADD_MEMORY_READ(stat_softmax_0, 3 * seq_len * sizeof(DATA_TYPE));
-        STATISTICS_ADD_MEMORY_WRITE(stat_softmax_0, 2 * seq_len * sizeof(DATA_TYPE));
+        STATISTICS_INC_MAC(stat_softmax_0, 2 * seq_len); // /, -
+        STATISTICS_INC_NON_LINEAR_OP(stat_softmax_0, seq_len); // exp
+        STATISTICS_INC_MEMORY_READ(stat_softmax_0, 3 * seq_len * sizeof(DATA_TYPE));
+        STATISTICS_INC_MEMORY_WRITE(stat_softmax_0, 2 * seq_len * sizeof(DATA_TYPE));
       }
 
       // output of attention = att @ V
@@ -1518,11 +1518,11 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
           for (int j = 0; j < seq_len; j++) {
             sum += att[i * seq_len + j] * V[d * seq_len + j];
           }
-          STATISTICS_ADD_MAC(stat_self_attn, seq_len);
-          STATISTICS_ADD_MEMORY_READ(stat_self_attn, 2 * seq_len * sizeof(DATA_TYPE));
+          STATISTICS_INC_MAC(stat_self_attn, seq_len);
+          STATISTICS_INC_MEMORY_READ(stat_self_attn, 2 * seq_len * sizeof(DATA_TYPE));
 
           xb[d * seq_len + i] = sum;
-          STATISTICS_ADD_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
+          STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
         }
       }
     }
@@ -1566,7 +1566,7 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
           if (!att_mask[k]) {
             att[q * encoder_seq_len + k] =
                 -__FLT_MAX__;  // Use large negative value for masked positions
-            STATISTICS_ADD_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
+            STATISTICS_INC_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
             continue;
           }
 
@@ -1574,19 +1574,19 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
           for (int d = 0; d < head_size; d++) {
             score += Q[d * seq_len + q] * K[d * encoder_seq_len + k];
           }
-          STATISTICS_ADD_MAC(stat_cross_attn, head_size);
-          STATISTICS_ADD_MEMORY_READ(stat_cross_attn, 2 * head_size * sizeof(DATA_TYPE));
+          STATISTICS_INC_MAC(stat_cross_attn, head_size);
+          STATISTICS_INC_MEMORY_READ(stat_cross_attn, 2 * head_size * sizeof(DATA_TYPE));
 
           att[q * encoder_seq_len + k] = score / head_size_sqrt;
-          STATISTICS_ADD_MAC(stat_cross_attn, 1); // div
-          STATISTICS_ADD_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
+          STATISTICS_INC_DIV(stat_cross_attn, 1); // div
+          STATISTICS_INC_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
         }
         softmax(att + q * encoder_seq_len, att + q * encoder_seq_len,
                 encoder_seq_len);  // softmax
-        STATISTICS_ADD_MAC(stat_softmax_1, 2 * encoder_seq_len); // /, -
-        STATISTICS_ADD_NON_LINEAR_OP(stat_softmax_1, encoder_seq_len); // exp
-        STATISTICS_ADD_MEMORY_READ(stat_softmax_1, 3 * encoder_seq_len * sizeof(DATA_TYPE));
-        STATISTICS_ADD_MEMORY_WRITE(stat_softmax_1, 2 * encoder_seq_len * sizeof(DATA_TYPE));
+        STATISTICS_INC_MAC(stat_softmax_1, 2 * encoder_seq_len); // /, -
+        STATISTICS_INC_NON_LINEAR_OP(stat_softmax_1, encoder_seq_len); // exp
+        STATISTICS_INC_MEMORY_READ(stat_softmax_1, 3 * encoder_seq_len * sizeof(DATA_TYPE));
+        STATISTICS_INC_MEMORY_WRITE(stat_softmax_1, 2 * encoder_seq_len * sizeof(DATA_TYPE));
       }
       // output of attention = att @ V
       for (int i = 0; i < seq_len; i++) {
@@ -1595,11 +1595,11 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
           for (int j = 0; j < encoder_seq_len; j++) {
             sum += att[i * encoder_seq_len + j] * V[d * encoder_seq_len + j];
           }
-          STATISTICS_ADD_MAC(stat_cross_attn, encoder_seq_len);
-          STATISTICS_ADD_MEMORY_READ(stat_cross_attn, 2 * encoder_seq_len * sizeof(DATA_TYPE));
+          STATISTICS_INC_MAC(stat_cross_attn, encoder_seq_len);
+          STATISTICS_INC_MEMORY_READ(stat_cross_attn, 2 * encoder_seq_len * sizeof(DATA_TYPE));
 
           xb[d * seq_len + i] = sum;
-          STATISTICS_ADD_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
+          STATISTICS_INC_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
         }
       }
     }
@@ -1738,9 +1738,9 @@ void conv2D(ConvolutionTensor* output, const ConvolutionTensor* input,
                 // 1 MACs
                 sum += (input->x[x_idx] * weights->weight[w_idx]);
                 // statistics
-                STATISTICS_ADD_MAC(stat, 1);
-                STATISTICS_ADD_MEMORY_READ(stat, 2 * sizeof(DATA_TYPE));
-                STATISTICS_ADD_MEMORY_WRITE(stat, 1 * sizeof(DATA_TYPE));
+                STATISTICS_INC_MAC(stat, 1);
+                STATISTICS_INC_MEMORY_READ(stat, 2 * sizeof(DATA_TYPE));
+                STATISTICS_INC_MEMORY_WRITE(stat, 1 * sizeof(DATA_TYPE));
               }
             }
           }
@@ -1795,20 +1795,20 @@ void maxpooling2D(ConvolutionTensor* output, const ConvolutionTensor* input,
                   input->height, input->width, ch, in_h, in_w)];
 
 
-              STATISTICS_ADD_MEMORY_READ(stat, 1 * sizeof(DATA_TYPE));
+              STATISTICS_INC_MEMORY_READ(stat, 1 * sizeof(DATA_TYPE));
 
               if (value > max_value) {
                 max_value = value;
               }
-              // statistics
-              STATISTICS_ADD_NON_LINEAR_OP(stat, 1);
+              // statistics - compare
+              STATISTICS_INC_NON_LINEAR_OP(stat, 1);
             }
           }
         }
 
         output->x[CONVTENSOR_INDEX(height, width, ch, h, w)] = max_value;
         // statistics
-        STATISTICS_ADD_MEMORY_WRITE(stat, 1 * sizeof(DATA_TYPE));
+        STATISTICS_INC_MEMORY_WRITE(stat, 1 * sizeof(DATA_TYPE));
       }
     }
   }
@@ -1843,24 +1843,24 @@ void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
     for (int j = 0; j < dim; j++) {
       mean += x[j * n + i];
     }
-    STATISTICS_ADD_MEMORY_READ(stat, 2 * dim * sizeof(DATA_TYPE)); // x, mean
-    STATISTICS_ADD_MAC(stat, dim);
-    STATISTICS_ADD_MEMORY_WRITE(stat, dim * sizeof(DATA_TYPE)); // mean
+    STATISTICS_INC_MEMORY_READ(stat, 2 * dim * sizeof(DATA_TYPE)); // x, mean
+    STATISTICS_INC_MAC(stat, dim);
+    STATISTICS_INC_MEMORY_WRITE(stat, dim * sizeof(DATA_TYPE)); // mean
 
     mean /= dim;
-    STATISTICS_ADD_MAC(stat, 1);
+    STATISTICS_INC_DIV(stat, 1);
 
     // Compute variance
     for (int j = 0; j < dim; j++) {
       DATA_TYPE diff = x[j * n + i] - mean;
       var += diff * diff;
     }
-    STATISTICS_ADD_MEMORY_READ(stat, 2 * dim * sizeof(DATA_TYPE)); // x, var
-    STATISTICS_ADD_MAC(stat, dim);
-    STATISTICS_ADD_MEMORY_WRITE(stat, dim * sizeof(DATA_TYPE)); // var
+    STATISTICS_INC_MEMORY_READ(stat, 2 * dim * sizeof(DATA_TYPE)); // x, var
+    STATISTICS_INC_MAC(stat, dim);
+    STATISTICS_INC_MEMORY_WRITE(stat, dim * sizeof(DATA_TYPE)); // var
 
     var /= dim;
-    STATISTICS_ADD_MAC(stat, 1);
+    STATISTICS_INC_DIV(stat, 1);
 
     DATA_TYPE inv_std = 1.0f / sqrtf(var + eps);
 
@@ -1869,9 +1869,9 @@ void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
       DATA_TYPE norm = (x[j * n + i] - mean) * inv_std;
       out[j * n + i] = norm * w[j] + b[j];
     }
-    STATISTICS_ADD_MEMORY_READ(stat, 3 * dim * sizeof(DATA_TYPE)); // x, w, b
-    STATISTICS_ADD_MAC(stat, dim * 2);
-    STATISTICS_ADD_MEMORY_WRITE(stat, dim * sizeof(DATA_TYPE)); // out
+    STATISTICS_INC_MEMORY_READ(stat, 3 * dim * sizeof(DATA_TYPE)); // x, w, b
+    STATISTICS_INC_MAC(stat, dim * 2);
+    STATISTICS_INC_MEMORY_WRITE(stat, dim * sizeof(DATA_TYPE)); // out
   }
   STATISTICS_APPEND_CSV(stat);
 }
@@ -1903,9 +1903,11 @@ void batchnorm2D(ConvolutionTensor* output, const ConvolutionTensor* input,
     DATA_TYPE scale = gamma / sqrtf(running_var + eps);
     DATA_TYPE bias = beta - running_mean * scale;
 
-    STATISTICS_ADD_MEMORY_READ(stat, 4 * sizeof(DATA_TYPE)); // gamma, beta, mean, var
-    STATISTICS_ADD_NON_LINEAR_OP(stat, 1); // sqrtf
-    STATISTICS_ADD_MAC(stat, 2); // scale, bias
+    STATISTICS_INC_MEMORY_READ(stat, 4 * sizeof(DATA_TYPE)); // gamma, beta, mean, var
+    STATISTICS_INC_NON_LINEAR_OP(stat, 1); // sqrtf
+    STATISTICS_INC_ADD(stat, 1); // scale
+    STATISTICS_INC_DIV(stat, 1); // scale
+    STATISTICS_INC_MAC(stat, 1); // bias
 
     for (int h = 0; h < H; h++) {
       for (int w = 0; w < W; w++) {
@@ -1913,9 +1915,9 @@ void batchnorm2D(ConvolutionTensor* output, const ConvolutionTensor* input,
         output->x[index] = input->x[index] * scale + bias;
       }
     }
-    STATISTICS_ADD_MEMORY_READ(stat, H*W*sizeof(DATA_TYPE)); // input->x
-    STATISTICS_ADD_MEMORY_WRITE(stat, H*W*sizeof(DATA_TYPE)); // output->x
-    STATISTICS_ADD_MAC(stat, H*W);
+    STATISTICS_INC_MEMORY_READ(stat, H*W*sizeof(DATA_TYPE)); // input->x
+    STATISTICS_INC_MEMORY_WRITE(stat, H*W*sizeof(DATA_TYPE)); // output->x
+    STATISTICS_INC_MAC(stat, H*W);
   }
   STATISTICS_APPEND_CSV(stat);
 }
@@ -1945,9 +1947,9 @@ void gemm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
       out[o * n + nidx] = b[o];
       for(int i = 0; i < id; i++) {
         out[o * n + nidx] += w[o * id + i] * x[i * n + nidx];
-        STATISTICS_ADD_MEMORY_READ(stat, 2 * sizeof(DATA_TYPE)); // w, x
-        STATISTICS_ADD_MEMORY_WRITE(stat, sizeof(DATA_TYPE)); // out
-        STATISTICS_ADD_MAC(stat, 1);
+        STATISTICS_INC_MEMORY_READ(stat, 2 * sizeof(DATA_TYPE)); // w, x
+        STATISTICS_INC_MEMORY_WRITE(stat, sizeof(DATA_TYPE)); // out
+        STATISTICS_INC_MAC(stat, 1);
       }
     }
   }
@@ -1972,9 +1974,9 @@ void add(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* y, int size) {
   for (i = 0; i < size; i++) {
     out[i] = x[i] + y[i];
   }
-  STATISTICS_ADD_MEMORY_READ(stat, 2 * size * sizeof(DATA_TYPE)); // x, y
-  STATISTICS_ADD_MEMORY_WRITE(stat, size * sizeof(DATA_TYPE)); // out
-  STATISTICS_ADD_MAC(stat, 2 * size);
+  STATISTICS_INC_MEMORY_READ(stat, 2 * size * sizeof(DATA_TYPE)); // x, y
+  STATISTICS_INC_MEMORY_WRITE(stat, size * sizeof(DATA_TYPE)); // out
+  STATISTICS_INC_ADD(stat, 2 * size);
   STATISTICS_APPEND_CSV(stat);
 }
 
@@ -2000,9 +2002,9 @@ void relu(DATA_TYPE* out, DATA_TYPE* x, int size) {
   for (i = 0; i < size; i++) {
     out[i] = (x[i] < 0) ? 0 : x[i];
   }
-  STATISTICS_ADD_MEMORY_READ(stat, size * sizeof(DATA_TYPE)); // x
-  STATISTICS_ADD_MEMORY_WRITE(stat, size * sizeof(DATA_TYPE)); // out
-  STATISTICS_ADD_NON_LINEAR_OP(stat, size);
+  STATISTICS_INC_MEMORY_READ(stat, size * sizeof(DATA_TYPE)); // x
+  STATISTICS_INC_MEMORY_WRITE(stat, size * sizeof(DATA_TYPE)); // out
+  STATISTICS_INC_NON_LINEAR_OP(stat, size); // compare
   STATISTICS_APPEND_CSV(stat);
 }
 
@@ -2053,9 +2055,10 @@ void sigmoid(DATA_TYPE* out, DATA_TYPE* x, int size) {
   for (i = 0; i < size; i++) {
     out[i] = 1 / (1 + expf(-x[i]));
   }
-  STATISTICS_ADD_MEMORY_READ(stat, size * sizeof(DATA_TYPE)); // x
-  STATISTICS_ADD_MEMORY_WRITE(stat, size * sizeof(DATA_TYPE)); // out
-  STATISTICS_ADD_NON_LINEAR_OP(stat, size);
-  STATISTICS_ADD_MAC(stat, size);
+  STATISTICS_INC_MEMORY_READ(stat, size * sizeof(DATA_TYPE)); // x
+  STATISTICS_INC_MEMORY_WRITE(stat, size * sizeof(DATA_TYPE)); // out
+  STATISTICS_INC_NON_LINEAR_OP(stat, size);
+  STATISTICS_INC_ADD(stat, size);
+  STATISTICS_INC_DIV(stat, size);
   STATISTICS_APPEND_CSV(stat);
 }

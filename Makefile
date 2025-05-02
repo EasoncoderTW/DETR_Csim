@@ -22,6 +22,8 @@ INPUT_BIN := $(INPUT_DIR)/model_input.bin
 WEIGHT_BIN := $(INPUT_DIR)/detr_weight.bin
 CONFIG_JSON := $(INPUT_DIR)/config.json
 
+STATISTIC_CSV := $(OUTPUT_DIR)/statistics.csv
+
 # model
 MODEL_REF := facebookresearch/detr:main
 MODEL_NAME := detr_resnet50
@@ -46,7 +48,7 @@ CFLAGS += -DDUMP -DDUMP_TENSOR_DIR='"$(CSIM_DEBUG_DIR)/"'
 endif
 
 ifeq ($(ANALYZE), 1)
-CFLAGS += -DANALYZE -DSTATISTICS_CSV_FILENAME='"$(OUTPUT_DIR)/statistics.csv"'
+CFLAGS += -DANALYZE -DSTATISTICS_CSV_FILENAME='"$(STATISTIC_CSV)"'
 endif
 
 .PHONY: all py_gen_weights py_inference csim_verify build run clean_csim clean_python clean debug
@@ -91,6 +93,13 @@ csim_verify:
 		--data_type 'fp32' \
 		--rtol 1e-6 \
 		--atol 1e-4
+
+# plot statistic result
+py_analyze:
+	$(PYTHON) $(PYTHON_DIR)/Analyzer.py \
+		--input_csv $(STATISTIC_CSV) \
+		--out_dir $(OUTPUT_DIR)
+
 # Csim
 debug:
 	make build DEBUG=1 DUMP=1 ANALYZE=1

@@ -18,7 +18,7 @@ void statistic_append_csv(statistics_t stat, const char* name, const char* subna
     return;
   }
 
-  fprintf(file, STATISTICS_CSV_FILE_FORMAT, name, subname, stat.mac,
+  fprintf(file, STATISTICS_CSV_FILE_FORMAT, name, subname, stat.add, stat.mul, stat.div,
           stat.non_linear_op, stat.memory_read, stat.memory_write);
 
   fclose(file);
