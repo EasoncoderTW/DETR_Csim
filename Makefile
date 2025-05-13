@@ -1,5 +1,6 @@
 CC := gcc
-PYTHON := python3
+# Detect if 'uv' is available
+PYTHON := $(shell command -v uv >/dev/null 2>&1 && echo 'uv run' || echo 'python3')
 VALGRIND := valgrind
 
 # directorys
