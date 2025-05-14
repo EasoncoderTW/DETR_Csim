@@ -1333,15 +1333,12 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
   int hidden_dim = c->hidden_dim;
   int head_size = dim / c->n_heads;
   int seq_len = c->encoder_seq_len;
-  MASK_TYPE* att_mask = ew->att_mask;
   int token_size = seq_len * dim;
 
   EncoderLayerWeights* w = ew->layer;
 
   DATA_TYPE head_size_sqrt = sqrtf(head_size);
 
-  STATISTICS_CREATE(stat_softmax);
-  STATISTICS_CREATE(stat_self_attn);
   for (int l = 0; l < c->n_encoder_layers; l++) {
     DEBUG_LOG("---------------------layer = %d", l);
     // pos embedding
@@ -1351,63 +1348,9 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
     gemm(r->k, r->xb, w[l].wk, w[l].bk, seq_len, dim, dim);
     gemm(r->v, r->x, w[l].wv, w[l].bv, seq_len, dim, dim);
 
-    // multi-head attention. iterate over all heads
-    DEBUG_LOG("multi-head attention");
-    STATISTICS_RESET(stat_softmax);
-    STATISTICS_RESET(stat_self_attn);
-    for (int h = 0; h < c->n_heads; h++) {
-      // get q,k,v of this head
-      DATA_TYPE* Q = r->q + h * head_size * seq_len;
-      DATA_TYPE* K = r->k + h * head_size * seq_len;
-      DATA_TYPE* V = r->v + h * head_size * seq_len;
-      DATA_TYPE* att = r->att + h * seq_len * seq_len;
-      DATA_TYPE* xb = r->xb + h * head_size * seq_len;
-
-      // q,k -> attention score
-      for (int q = 0; q < seq_len; q++) {
-        for (int k = 0; k < seq_len; k++) {
-          // skip if mask is 0(false);
-          if (!att_mask[q] || !att_mask[k]) {
-            att[q * seq_len + k] =
-                -__FLT_MAX__;  // Use large negative value for masked positions
-            STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
-            continue;
-          }
-
-          DATA_TYPE score = 0;
-          for (int d = 0; d < head_size; d++) {
-            score += Q[d * seq_len + q] * K[d * seq_len + k];
-          }
-          STATISTICS_INC_MAC(stat_self_attn, head_size);
-          STATISTICS_INC_MEMORY_READ(stat_self_attn, 2 * head_size * sizeof(DATA_TYPE));
-
-          att[q * seq_len + k] = score / head_size_sqrt;  // scale
-          STATISTICS_INC_DIV(stat_self_attn, 1); // div
-          STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
-        }
-        softmax(att + q * seq_len, att + q * seq_len, seq_len);  // softmax - threee pass
-        STATISTICS_INC_MAC(stat_softmax, 2 * seq_len); // /, -
-        STATISTICS_INC_NON_LINEAR_OP(stat_softmax, seq_len); // exp
-        STATISTICS_INC_MEMORY_READ(stat_softmax, 3 * seq_len * sizeof(DATA_TYPE));
-        STATISTICS_INC_MEMORY_WRITE(stat_softmax, 2 * seq_len * sizeof(DATA_TYPE));
-      }
-      // output of attention = att @ V
-      for (int i = 0; i < seq_len; i++) {
-        for (int d = 0; d < head_size; d++) {
-          DATA_TYPE sum = 0;
-          for (int j = 0; j < seq_len; j++) {
-            sum += att[i * seq_len + j] * V[d * seq_len + j];
-          }
-          STATISTICS_INC_MAC(stat_self_attn, seq_len);
-          STATISTICS_INC_MEMORY_READ(stat_self_attn, 2 * seq_len * sizeof(DATA_TYPE));
-
-          xb[d * seq_len + i] = sum;
-          STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
-        }
-      }
-    }
-    STATISTICS_APPEND_CSV(stat_softmax);
-    STATISTICS_APPEND_CSV(stat_self_attn);
+    // multi-head attention
+    multihead_attention(r->xb, r->q, r->k, r->v,
+        r->att, ew->att_mask, c->n_heads, dim, seq_len, seq_len);
 
     // output gemm
     gemm(r->xb2, r->xb, w[l].wo, w[l].bo, seq_len, dim, dim);
@@ -1460,11 +1403,6 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
 
   DATA_TYPE head_size_sqrt = sqrtf(head_size);
 
-  STATISTICS_CREATE(stat_softmax_0);
-  STATISTICS_CREATE(stat_softmax_1);
-  STATISTICS_CREATE(stat_cross_attn);
-  STATISTICS_CREATE(stat_self_attn);
-
   // decoder feature pos embedding
   add(r->f_embed, r->f, dw->pos_embedding, encoder_token_size);
 
@@ -1477,57 +1415,9 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
     gemm(r->k, r->xb, w[l].wk, w[l].bk, seq_len, dim, dim);
     gemm(r->v, r->x, w[l].wv, w[l].bv, seq_len, dim, dim);
 
-    // multi-head attention 1. iterate over all heads
-    DEBUG_LOG("multi-head attention 1");
-    STATISTICS_RESET(stat_softmax_0);
-    STATISTICS_RESET(stat_self_attn);
-    int h;
-    for (h = 0; h < c->n_heads; h++) {
-      // get q,k,v of this head
-      DATA_TYPE* Q = r->q + h * head_size * seq_len;
-      DATA_TYPE* K = r->k + h * head_size * seq_len;
-      DATA_TYPE* V = r->v + h * head_size * seq_len;
-      DATA_TYPE* att = r->att + h * seq_len * seq_len;
-      DATA_TYPE* xb = r->xb + h * head_size * seq_len;
-
-      // q,k -> attention score
-      for (int q = 0; q < seq_len; q++) {
-        for (int k = 0; k < seq_len; k++) {
-          DATA_TYPE score = 0;
-          for (int d = 0; d < head_size; d++) {
-            score += Q[d * seq_len + q] * K[d * seq_len + k];
-          }
-          STATISTICS_INC_MAC(stat_self_attn, head_size);
-          STATISTICS_INC_MEMORY_READ(stat_self_attn, 2 * head_size * sizeof(DATA_TYPE));
-
-          att[q * seq_len + k] = score / head_size_sqrt;
-          STATISTICS_INC_DIV(stat_self_attn, 1); // div
-          STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
-        }
-        softmax(att + q * seq_len, att + q * seq_len, seq_len);  // softmax
-        STATISTICS_INC_MAC(stat_softmax_0, 2 * seq_len); // /, -
-        STATISTICS_INC_NON_LINEAR_OP(stat_softmax_0, seq_len); // exp
-        STATISTICS_INC_MEMORY_READ(stat_softmax_0, 3 * seq_len * sizeof(DATA_TYPE));
-        STATISTICS_INC_MEMORY_WRITE(stat_softmax_0, 2 * seq_len * sizeof(DATA_TYPE));
-      }
-
-      // output of attention = att @ V
-      for (int i = 0; i < seq_len; i++) {
-        for (int d = 0; d < head_size; d++) {
-          DATA_TYPE sum = 0;
-          for (int j = 0; j < seq_len; j++) {
-            sum += att[i * seq_len + j] * V[d * seq_len + j];
-          }
-          STATISTICS_INC_MAC(stat_self_attn, seq_len);
-          STATISTICS_INC_MEMORY_READ(stat_self_attn, 2 * seq_len * sizeof(DATA_TYPE));
-
-          xb[d * seq_len + i] = sum;
-          STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
-        }
-      }
-    }
-    STATISTICS_APPEND_CSV(stat_softmax_0);
-    STATISTICS_APPEND_CSV(stat_self_attn);
+    // multi-head attention 1
+    multihead_attention(r->xb, r->q, r->k, r->v,
+      r->att, NULL, c->n_heads, dim, seq_len, seq_len);
 
     // output gemm
     gemm(r->xb2, r->xb, w[l].wo, w[l].bo, seq_len, dim, dim);
@@ -1548,63 +1438,9 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
     gemm(r->k, r->f_embed, w[l].wk2, w[l].bk2, encoder_seq_len, dim, dim);
     gemm(r->v, r->f, w[l].wv2, w[l].bv2, encoder_seq_len, dim, dim);
 
-    // multi-head attention 2. iterate over all heads
-    DEBUG_LOG("multi-head attention 2");
-    STATISTICS_RESET(stat_softmax_1);
-    STATISTICS_RESET(stat_cross_attn);
-    for (int h = 0; h < c->n_heads; h++) {
-      // get q,k,v of this head
-      DATA_TYPE* Q = r->q + h * head_size * seq_len;
-      DATA_TYPE* K = r->k + h * head_size * encoder_seq_len;
-      DATA_TYPE* V = r->v + h * head_size * encoder_seq_len;
-      DATA_TYPE* att = r->att + h * seq_len * encoder_seq_len;
-      DATA_TYPE* xb = r->xb + h * head_size * seq_len;
-      // q,k -> attention score
-      for (int q = 0; q < seq_len; q++) {
-        for (int k = 0; k < encoder_seq_len; k++) {
-          // skip if mask is 0(false);
-          if (!att_mask[k]) {
-            att[q * encoder_seq_len + k] =
-                -__FLT_MAX__;  // Use large negative value for masked positions
-            STATISTICS_INC_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
-            continue;
-          }
-
-          DATA_TYPE score = 0;
-          for (int d = 0; d < head_size; d++) {
-            score += Q[d * seq_len + q] * K[d * encoder_seq_len + k];
-          }
-          STATISTICS_INC_MAC(stat_cross_attn, head_size);
-          STATISTICS_INC_MEMORY_READ(stat_cross_attn, 2 * head_size * sizeof(DATA_TYPE));
-
-          att[q * encoder_seq_len + k] = score / head_size_sqrt;
-          STATISTICS_INC_DIV(stat_cross_attn, 1); // div
-          STATISTICS_INC_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
-        }
-        softmax(att + q * encoder_seq_len, att + q * encoder_seq_len,
-                encoder_seq_len);  // softmax
-        STATISTICS_INC_MAC(stat_softmax_1, 2 * encoder_seq_len); // /, -
-        STATISTICS_INC_NON_LINEAR_OP(stat_softmax_1, encoder_seq_len); // exp
-        STATISTICS_INC_MEMORY_READ(stat_softmax_1, 3 * encoder_seq_len * sizeof(DATA_TYPE));
-        STATISTICS_INC_MEMORY_WRITE(stat_softmax_1, 2 * encoder_seq_len * sizeof(DATA_TYPE));
-      }
-      // output of attention = att @ V
-      for (int i = 0; i < seq_len; i++) {
-        for (int d = 0; d < head_size; d++) {
-          DATA_TYPE sum = 0;
-          for (int j = 0; j < encoder_seq_len; j++) {
-            sum += att[i * encoder_seq_len + j] * V[d * encoder_seq_len + j];
-          }
-          STATISTICS_INC_MAC(stat_cross_attn, encoder_seq_len);
-          STATISTICS_INC_MEMORY_READ(stat_cross_attn, 2 * encoder_seq_len * sizeof(DATA_TYPE));
-
-          xb[d * seq_len + i] = sum;
-          STATISTICS_INC_MEMORY_WRITE(stat_cross_attn, sizeof(DATA_TYPE));
-        }
-      }
-    }
-    STATISTICS_APPEND_CSV(stat_softmax_1);
-    STATISTICS_APPEND_CSV(stat_cross_attn);
+    // multi-head attention 2
+    multihead_attention(r->xb, r->q, r->k, r->v,
+      r->att, NULL, c->n_heads, dim, seq_len, encoder_seq_len);
 
     // output gemm
     gemm(r->xb2, r->xb, w[l].wo2, w[l].bo2, seq_len, dim, dim);
@@ -1978,6 +1814,96 @@ void add(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* y, int size) {
   STATISTICS_INC_MEMORY_WRITE(stat, size * sizeof(DATA_TYPE)); // out
   STATISTICS_INC_ADD(stat, 2 * size);
   STATISTICS_APPEND_CSV(stat);
+}
+
+/**
+ * Performs a multi-head attention operation.
+ *
+ * @param out The output array.
+ * @param qx The query array.
+ * @param kx The key array.
+ * @param vx The value array.
+ * @param att The attention array.
+ * @param att_mask The attention mask array.
+ * @param n_heads The number of attention heads.
+ * @param dim The dimension of each head.
+ * @param q_len The length of the query.
+ * @param kv_len The length of the key/value.
+ */
+void multihead_attention(DATA_TYPE* out, DATA_TYPE* qx, DATA_TYPE* kx,
+                     DATA_TYPE* vx, DATA_TYPE* att, MASK_TYPE* att_mask,
+                     int n_heads, int dim, int q_len, int kv_len) {
+  assert(out != NULL);
+  assert(qx != NULL);
+  assert(kx != NULL);
+  assert(vx != NULL);
+  assert(att != NULL);
+
+  int use_att_mask = (att_mask != NULL);
+  int head_size = dim / n_heads;
+  DATA_TYPE head_size_sqrt = sqrtf(head_size);
+
+  DEBUG_LOG("n_heads = %d, dim = %d, q_len = %d, kv_len = %d",
+            n_heads, dim, q_len, kv_len);
+
+  STATISTICS_CREATE(stat_softmax);
+  STATISTICS_CREATE(stat_self_attn);
+
+  int h;
+  for (h = 0; h < n_heads; h++) {
+    // get q,k,v of this head
+    DATA_TYPE* Q = qx + h * head_size * q_len;
+    DATA_TYPE* K = kx + h * head_size * kv_len;
+    DATA_TYPE* V = vx + h * head_size * kv_len;
+    DATA_TYPE* ATT = att + h * q_len * kv_len;
+    DATA_TYPE* OUT = out + h * head_size * q_len;
+
+    // q,k -> attention score
+    for (int q = 0; q < q_len; q++) {
+      for (int k = 0; k < kv_len; k++) {
+        // skip if mask is 0(false);
+        if (use_att_mask && (!att_mask[q] || !att_mask[k])) {
+          ATT[q * kv_len + k] =
+              -__FLT_MAX__;  // Use large negative value for masked positions
+          STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
+          continue;
+        }
+
+        DATA_TYPE score = 0;
+        for (int d = 0; d < head_size; d++) {
+          score += Q[d * q_len + q] * K[d * kv_len + k];
+        }
+        STATISTICS_INC_MAC(stat_self_attn, head_size);
+        STATISTICS_INC_MEMORY_READ(stat_self_attn, 2 * head_size * sizeof(DATA_TYPE));
+
+        ATT[q * kv_len + k] = score / head_size_sqrt;
+        STATISTICS_INC_DIV(stat_self_attn, 1); // div
+        STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
+      }
+      softmax(ATT + q * kv_len, ATT + q * kv_len, kv_len);  // softmax
+      STATISTICS_INC_MAC(stat_softmax, 2 * kv_len); // /, -
+      STATISTICS_INC_NON_LINEAR_OP(stat_softmax, kv_len); // exp
+      STATISTICS_INC_MEMORY_READ(stat_softmax, 3 * kv_len * sizeof(DATA_TYPE));
+      STATISTICS_INC_MEMORY_WRITE(stat_softmax, 2 * kv_len * sizeof(DATA_TYPE));
+    }
+
+    // output of attention = att @ V
+    for (int i = 0; i < q_len; i++) {
+      for (int d = 0; d < head_size; d++) {
+        DATA_TYPE sum = 0;
+        for (int j = 0; j < kv_len; j++) {
+          sum += ATT[i * kv_len + j] * V[d * kv_len + j];
+        }
+        STATISTICS_INC_MAC(stat_self_attn, kv_len);
+        STATISTICS_INC_MEMORY_READ(stat_self_attn, 2 * kv_len * sizeof(DATA_TYPE));
+
+        OUT[d * q_len + i] = sum;
+        STATISTICS_INC_MEMORY_WRITE(stat_self_attn, sizeof(DATA_TYPE));
+      }
+    }
+  }
+  STATISTICS_APPEND_CSV(stat_softmax);
+  STATISTICS_APPEND_CSV(stat_self_attn);
 }
 
 /*

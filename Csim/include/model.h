@@ -375,6 +375,10 @@ void gemm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
           int id, int od);
 void add(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* y, int size);
 
+void multihead_attention(DATA_TYPE* out, DATA_TYPE* qx, DATA_TYPE* kx,
+  DATA_TYPE* vx, DATA_TYPE* att, MASK_TYPE* att_mask,
+  int n_heads, int dim, int q_len, int kv_len);
+
 //**************************************
 // Activation Functions
 //**************************************
