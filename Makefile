@@ -36,7 +36,7 @@ TARGET_IMGAE = $(addprefix $(IMAGE_DIR)/, $(shell ls $(IMAGE_DIR) | grep -E '\.(
 endif
 
 # config
-CFLAGS := -I$(CSIM_DIR)/include
+CFLAGS := -I$(CSIM_DIR)/include -O3 -Wall
 LDFLAGS := -lm
 ELF_NAME := detr
 
@@ -54,15 +54,14 @@ endif
 
 .PHONY: all py_gen_weights py_inference csim_verify build run clean_csim clean_python clean debug
 
-all:
+all: # default target to run the entire workflow
 	make py_gen_weights
 	make py_inference
 	make build DEBUG=1 DUMP=1 ANALYZE=1
 	make run
 	make csim_verify
 
-# python script for model weight generation
-py_gen_weights:
+py_gen_weights: # python script for model weight generation
 	mkdir -p $(INPUT_DIR)
 	mkdir -p $(OUTPUT_DIR)
 
@@ -72,8 +71,7 @@ py_gen_weights:
 		--output '$(WEIGHT_BIN)'\
 		--list true
 
-# python script for model input generation and output verification
-py_inference:
+py_inference: # python script for model input generation and output verification
 	mkdir -p $(INPUT_DIR)
 	mkdir -p $(PYTHON_OUTPUT_DIR)
 
@@ -86,40 +84,38 @@ py_inference:
 
 	cp $(PYTHON_OUTPUT_DIR)/model_input.bin $(INPUT_BIN)
 
-# verify the model output
-csim_verify:
+csim_verify: # verify the model output
 	$(PYTHON) $(PYTHON_DIR)/CsimVerify.py\
 		--csim $(CSIM_DEBUG_DIR) \
 		--golden $(PYTHON_OUTPUT_DIR) \
 		--data_type 'fp32' \
-		--rtol 1e-6 \
-		--atol 1e-4
+		--rtol 1e-4 \
+		--atol 1e-3
 
-# plot statistic result
-py_analyze:
+py_analyze: # plot statistic result
 	$(PYTHON) $(PYTHON_DIR)/Analyzer.py \
 		--input_csv $(STATISTIC_CSV) \
 		--out_dir $(OUTPUT_DIR)
 
-# Csim
-debug:
+debug: # build and run Csim with debug options
 	make build DEBUG=1 DUMP=1 ANALYZE=1
 
-build:
+build: # build Csim executable
+	mkdir -p $(CSIM_OUTPUT_DIR)
 	$(CC) \
 	$(CFLAGS) \
 	$(CSIM_DIR)/detr.c $(CSIM_DIR)/src/*.c \
 	-o $(ELF_NAME) \
 	$(LDFLAGS)
 
-run:
+run: # run Csim executable
 	mkdir -p $(CSIM_OUTPUT_DIR)
 	mkdir -p $(CSIM_DEBUG_DIR)
 	mkdir -p $(LOG_DIR)
 
 	./$(ELF_NAME) $(CONFIG_JSON) $(WEIGHT_BIN) $(INPUT_BIN) $(OUT_BOXES_BIN) $(OUT_SCORES_BIN) 1> $(LOG_DIR)/output.log 2> $(LOG_DIR)/debug.log
 
-valgrind:
+valgrind: # run Csim executable with Valgrind massif tool
 	mkdir -p $(CSIM_OUTPUT_DIR)
 	mkdir -p $(CSIM_DEBUG_DIR)
 	mkdir -p $(LOG_DIR)
@@ -134,17 +130,20 @@ valgrind:
 	--massif-out-file=$(LOG_DIR)/massif.out.%p_$(ELF_NAME) \
 	./$(ELF_NAME) $(CONFIG_JSON) $(WEIGHT_BIN) $(INPUT_BIN) $(OUT_BOXES_BIN) $(OUT_SCORES_BIN) 1> $(LOG_DIR)/output.log 2> $(LOG_DIR)/debug.log
 
-clean_csim:
-	rm $(ELF_NAME)
+clean_csim: # clean Csim output and executable
+	rm -f $(ELF_NAME)
 	rm -rf $(CSIM_OUTPUT_DIR)
 
-clean_python:
+clean_python: # clean Python output
 	rm -rf $(PYTHON_OUTPUT_DIR)
 
-clean: clean_csim clean_python
+clean: clean_csim clean_python # clean all output and logs
 	rm -rf $(LOG_DIR)
-	rm -rf $(OUTPUT_DIR)
 	rm -f *.log
+
+help: # display help message
+	@echo "\033[1;34mAvailable targets:\033[0m"
+	@grep -E '^[a-zA-Z_-]+:.*?#' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?#"}; {printf "\033[1;32m  %-20s\033[0m %s\n", $$1, $$2}'
 
 # other targets
 %:

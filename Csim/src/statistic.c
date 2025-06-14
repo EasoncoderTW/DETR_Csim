@@ -18,8 +18,16 @@ void statistic_append_csv(statistics_t stat, const char* name, const char* subna
     return;
   }
 
-  fprintf(file, STATISTICS_CSV_FILE_FORMAT, name, subname, stat.add, stat.mul, stat.div,
-          stat.non_linear_op, stat.memory_read, stat.memory_write);
-
+  fprintf(file, STATISTICS_CSV_FILE_FORMAT, name, subname,
+          stat.add,
+          stat.mul,
+          stat.div,
+          stat.non_linear_op,
+          stat.sram_read,
+          stat.sram_write,
+          stat.dram_read,
+          stat.dram_write,
+          stat.sram_size,
+          stat.sram_used);
   fclose(file);
 }

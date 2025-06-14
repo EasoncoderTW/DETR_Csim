@@ -32,12 +32,12 @@ def verify(csim_path, golden_path, data_type, rtol, atol):
                 continue
             # fp32 comparison tolerance
             if not np.allclose(csim_data, golden_data, rtol=rtol, atol=atol):
-                print("Mismatch found!")
+                print("\033[91mMismatch found!\033[0m")
                 # Optionally, print the differences
                 diff = np.abs(csim_data - golden_data)
-                print(f"\tMax diff: {np.max(diff)}, Mean diff: {np.mean(diff)}")
+                print(f"\t\033[91mMax diff: {np.max(diff)}, Mean diff: {np.mean(diff)}\033[0m")
             else:
-                print("Match!")
+                print("\033[92mMatch!\033[0m")
 
 
 def parse_arguments():
