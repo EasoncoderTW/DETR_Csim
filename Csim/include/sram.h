@@ -53,58 +53,36 @@ void sram_print_stats(SRAM_Manager_t* manager);
 * ============================
 */
 
-// #define SRAM_DEFAULT_SIZE SRAM_SIZE_8MB
+    #ifndef SRAM_DEFINE_EXTERN
+    #define SRAM_DEFINE_EXTERN
 
-// #define CONV_TILED_OUT_HEIGHT 8  // Height of the tile
-// #define CONV_TILED_OUT_WIDTH 8   // Width of the tile
-// #define CONV_TILED_OUT_CHANNELS 32  // Number of input channels per tile
-// #define CONV_TILED_IN_CHANNELS 32 // Number of output channels per tile
+        #define SRAM_DEFAULT_SIZE SRAM_SIZE_8MB
 
-// #define MAXPOOL_TILED_OUT_HEIGHT 32  // Height of the tile
-// #define MAXPOOL_TILED_OUT_WIDTH 32   // Width of the tile
-// #define MAXPOOL_TILED_CHANNELS 16 // Number of channels per tile
+        #define CONV_TILED_OUT_HEIGHT 32  // Height of the tile
+        #define CONV_TILED_OUT_WIDTH 32   // Width of the tile
+        #define CONV_TILED_OUT_CHANNELS 128  // Number of input channels per tile
+        #define CONV_TILED_IN_CHANNELS 64 // Number of output channels per tile
 
-// #define LAYERNORM_TILED_N 128   // Number of elements per tile
+        #define MAXPOOL_TILED_OUT_HEIGHT 32  // Height of the tile
+        #define MAXPOOL_TILED_OUT_WIDTH 32   // Width of the tile
+        #define MAXPOOL_TILED_CHANNELS 128 // Number of channels per tile
 
-// #define BATCHNORM_TILED_CHANNELS 32 // Number of channels per tile
-// #define BATCHNORM_TILED_HEIGHT 32  // Height of the tile
-// #define BATCHNORM_TILED_WIDTH 32   // Width of the tile
+        #define LAYERNORM_TILED_N 1024   // Number of elements per tile
 
-// #define GEMM_TILED_OUT_DIM 256 // Number of output dimensions per tile
-// #define GEMM_TILED_IN_DIM 256 // Number of input dimensions per tile
-// #define GEMM_TILED_N 64  // Number of rows per tile
+        #define BATCHNORM_TILED_CHANNELS 64 // Number of channels per tile
+        #define BATCHNORM_TILED_HEIGHT 64  // Height of the tile
+        #define BATCHNORM_TILED_WIDTH 64   // Width of the tile
 
-// #define MULTIHEAD_ATTENTION_TILED_Q_LEN 128  // Query length per tile
-// #define MULTIHEAD_ATTENTION_TILED_KV_LEN 128  // Key/Value length per tile
+        #define GEMM_TILED_OUT_DIM 512 // Number of output dimensions per tile
+        #define GEMM_TILED_IN_DIM 512 // Number of input dimensions per tile
+        #define GEMM_TILED_N 128  // Number of rows per tile
 
-// #define ADD_TILED_SIZE 2048 // Number of elements per tile
-// #define SIGMOID_TILED_SIZE 2048 // Number of elements per tile
+        #define MULTIHEAD_ATTENTION_TILED_Q_LEN 32  // Query length per tile
+        #define MULTIHEAD_ATTENTION_TILED_KV_LEN 32  // Key/Value length per tile
 
-#define SRAM_DEFAULT_SIZE SRAM_SIZE_8MB
+        #define ADD_TILED_SIZE 4096 // Number of elements per tile
+        #define SIGMOID_TILED_SIZE 4096 // Number of elements per tile
 
-#define CONV_TILED_OUT_HEIGHT 32  // Height of the tile
-#define CONV_TILED_OUT_WIDTH 32   // Width of the tile
-#define CONV_TILED_OUT_CHANNELS 128  // Number of input channels per tile
-#define CONV_TILED_IN_CHANNELS 64 // Number of output channels per tile
-
-#define MAXPOOL_TILED_OUT_HEIGHT 32  // Height of the tile
-#define MAXPOOL_TILED_OUT_WIDTH 32   // Width of the tile
-#define MAXPOOL_TILED_CHANNELS 128 // Number of channels per tile
-
-#define LAYERNORM_TILED_N 1024   // Number of elements per tile
-
-#define BATCHNORM_TILED_CHANNELS 64 // Number of channels per tile
-#define BATCHNORM_TILED_HEIGHT 64  // Height of the tile
-#define BATCHNORM_TILED_WIDTH 64   // Width of the tile
-
-#define GEMM_TILED_OUT_DIM 512 // Number of output dimensions per tile
-#define GEMM_TILED_IN_DIM 512 // Number of input dimensions per tile
-#define GEMM_TILED_N 128  // Number of rows per tile
-
-#define MULTIHEAD_ATTENTION_TILED_Q_LEN 32  // Query length per tile
-#define MULTIHEAD_ATTENTION_TILED_KV_LEN 32  // Key/Value length per tile
-
-#define ADD_TILED_SIZE 4096 // Number of elements per tile
-#define SIGMOID_TILED_SIZE 4096 // Number of elements per tile
+    #endif // SRAM_DEFINE_EXTERN
 
 #endif // SRAM_H

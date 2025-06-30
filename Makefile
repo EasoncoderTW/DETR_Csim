@@ -7,6 +7,7 @@ VALGRIND := valgrind
 OUTPUT_DIR := ./output
 CSIM_DIR := ./Csim
 PYTHON_DIR := ./Python
+PYTHON_UTILS_DIR := $(PYTHON_DIR)/utils
 INPUT_DIR := ./model_bundle
 IMAGE_DIR := ./demo_images
 LOG_DIR := ./log
@@ -40,6 +41,7 @@ CFLAGS := -I$(CSIM_DIR)/include -O3 -Wall
 LDFLAGS := -lm
 ELF_NAME := detr
 
+# default flags
 ifeq ($(DEBUG), 1)
 CFLAGS += -DDEBUG
 endif
@@ -52,9 +54,12 @@ ifeq ($(ANALYZE), 1)
 CFLAGS += -DANALYZE -DSTATISTICS_CSV_FILENAME='"$(STATISTIC_CSV)"'
 endif
 
-.PHONY: all py_gen_weights py_inference csim_verify build run clean_csim clean_python clean debug
 
-all: # default target to run the entire workflow
+.PHONY: all py_gen_weights py_inference csim_verify build run clean_csim clean_python clean debug help default
+
+default: help # default target to display help message
+
+all: # run the entire workflow
 	make py_gen_weights
 	make py_inference
 	make build DEBUG=1 DUMP=1 ANALYZE=1
@@ -65,7 +70,7 @@ py_gen_weights: # python script for model weight generation
 	mkdir -p $(INPUT_DIR)
 	mkdir -p $(OUTPUT_DIR)
 
-	$(PYTHON) $(PYTHON_DIR)/ModelWeight.py \
+	$(PYTHON) $(PYTHON_UTILS_DIR)/ModelWeight.py \
 		--repo_or_dir '$(MODEL_REF)'\
 		--model '$(MODEL_NAME)'\
 		--output '$(WEIGHT_BIN)'\
@@ -75,7 +80,7 @@ py_inference: # python script for model input generation and output verification
 	mkdir -p $(INPUT_DIR)
 	mkdir -p $(PYTHON_OUTPUT_DIR)
 
-	$(PYTHON) $(PYTHON_DIR)/ModelInference.py\
+	$(PYTHON) $(PYTHON_UTILS_DIR)/ModelInference.py\
 		--repo_or_dir '$(MODEL_REF)'\
 		--model '$(MODEL_NAME)'\
 		--bin_output '$(PYTHON_OUTPUT_DIR)'\
@@ -85,7 +90,7 @@ py_inference: # python script for model input generation and output verification
 	cp $(PYTHON_OUTPUT_DIR)/model_input.bin $(INPUT_BIN)
 
 csim_verify: # verify the model output
-	$(PYTHON) $(PYTHON_DIR)/CsimVerify.py\
+	$(PYTHON) $(PYTHON_UTILS_DIR)/CsimVerify.py\
 		--csim $(CSIM_DEBUG_DIR) \
 		--golden $(PYTHON_OUTPUT_DIR) \
 		--data_type 'fp32' \
@@ -93,7 +98,7 @@ csim_verify: # verify the model output
 		--atol 1e-3
 
 py_analyze: # plot statistic result
-	$(PYTHON) $(PYTHON_DIR)/Analyzer.py \
+	$(PYTHON) $(PYTHON_UTILS_DIR)/Analyzer.py \
 		--input_csv $(STATISTIC_CSV) \
 		--out_dir $(OUTPUT_DIR)
 

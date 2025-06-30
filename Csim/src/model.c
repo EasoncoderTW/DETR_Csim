@@ -107,10 +107,6 @@ void dump_tensor(const char* name, const DATA_TYPE* tensor, int size){
     exit(EXIT_FAILURE);
   }
 
-  size_t chunk_size = 1024; // Define a chunk size to write in smaller pieces
-  size_t remaining = size;
-  const DATA_TYPE* current_ptr = tensor;
-
   size_t write_out = fwrite(tensor, sizeof(DATA_TYPE), size, fp);
   if (write_out != size) {
     fprintf(stderr, "%s:%d %s(): write file failed: %s\n", __FILE__, __LINE__, __func__, name);
@@ -161,9 +157,14 @@ char* load_json_file(const char* filename) {
 
   char* buffer = NULL;
   MALLOC(buffer, char, len + 1);
-  fread(buffer, 1, len, f);
-  buffer[len] = '\0';
+  size_t read_size = fread(buffer, 1, len, f);
   fclose(f);
+  if (read_size != len) {
+    fprintf(stderr, "Failed to read the entire file: %s\n", filename);
+    free(buffer);
+    return NULL;
+  }
+  buffer[len] = '\0';
   return buffer;
 }
 
@@ -418,7 +419,6 @@ void* find_tensor(const char* name, DETR* detr) {
                                    (size_t)detr->file_header.info_offset);
   int nt = detr->file_header.num_tensor;
   char* tname;
-  int data_size;
   void* r_ptr = NULL;
 
   for (int i = 0; i < nt; i++) {
@@ -1334,13 +1334,10 @@ void forward_encoder(TransformerConfig* c, EncoderWeights* ew,
                      EncoderRunState* r) {
   int dim = c->dim;
   int hidden_dim = c->hidden_dim;
-  int head_size = dim / c->n_heads;
   int seq_len = c->encoder_seq_len;
   int token_size = seq_len * dim;
 
   EncoderLayerWeights* w = ew->layer;
-
-  DATA_TYPE head_size_sqrt = sqrtf(head_size);
 
   for (int l = 0; l < c->n_encoder_layers; l++) {
     DEBUG_LOG("---------------------layer = %d", l);
@@ -1395,16 +1392,12 @@ void forward_decoder(TransformerConfig* c, DecoderWeights* dw,
                      DecoderRunState* r) {
   int dim = c->dim;
   int hidden_dim = c->hidden_dim;
-  int head_size = dim / c->n_heads;
   int seq_len = c->decoder_seq_len;
   int encoder_seq_len = c->encoder_seq_len;
   int token_size = seq_len * dim;
   int encoder_token_size = encoder_seq_len * dim;
-  MASK_TYPE* att_mask = dw->att_mask;
 
   DecoderLayerWeights* w = dw->layer;
-
-  DATA_TYPE head_size_sqrt = sqrtf(head_size);
 
   // decoder feature pos embedding
   add(r->f_embed, r->f, dw->pos_embedding, encoder_token_size);
@@ -2306,7 +2299,6 @@ void multihead_attention(DATA_TYPE* out, DATA_TYPE* qx, DATA_TYPE* kx,
     DATA_TYPE* Q = qx + h * head_size * q_len;
     DATA_TYPE* K = kx + h * head_size * kv_len;
     DATA_TYPE* V = vx + h * head_size * kv_len;
-    DATA_TYPE* ATT = att + h * q_len * kv_len;
     DATA_TYPE* OUT = out + h * head_size * q_len;
 
     for (int q_tile = 0; q_tile < q_len; q_tile += tile_q_len) {
