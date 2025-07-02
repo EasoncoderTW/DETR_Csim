@@ -32,7 +32,7 @@ build/
 *.tmp
 *.bak
 *.DS_Store
-Thumbs.db
+*.db
 
 output/
 log/

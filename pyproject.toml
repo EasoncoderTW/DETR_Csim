@@ -52,3 +52,6 @@ dependencies = [
 [tool.uv.sources]
 torch = { url = "https://download.pytorch.org/whl/cpu/torch-2.5.1%2Bcpu-cp310-cp310-linux_x86_64.whl" }
 torchvision = { url = "https://download.pytorch.org/whl/cpu/torchvision-0.20.1%2Bcpu-cp310-cp310-linux_x86_64.whl" }
+
+[tool.setuptools]
+packages = ["Python"]
