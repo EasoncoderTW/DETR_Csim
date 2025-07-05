@@ -6,9 +6,10 @@ import pandas as pd
 import shutil
 from dataclasses import dataclass
 
-DB_PATH = "./Python/experimental_motel/dse_results.db"
+DB_PATH = "./dse_results.db"
 RESULTS_DIR = "results"
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # -----------------------------
 # Parameter Definition
@@ -16,7 +17,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 @dataclass
 class SramTileParameters:
     CONV_TILED_OUT_HEIGHT: int
-    SRAM_DEFAULT_SIZE: int = 8388608
+    SRAM_DEFAULT_SIZE: int = 8388608 # 8 MB
     CONV_TILED_OUT_WIDTH: int = 32
     CONV_TILED_OUT_CHANNELS: int = 128
     CONV_TILED_IN_CHANNELS: int = 64
@@ -135,7 +136,7 @@ class CsimTask:
             raise RuntimeError("Execution failed")
 
     def archive_results(self):
-        result_dir = os.path.join(ROOT_DIR, RESULTS_DIR, self.config_hash)
+        result_dir = os.path.join(CURRENT_DIR, RESULTS_DIR, self.config_hash)
         os.makedirs(result_dir, exist_ok=True)
         dst_csv = os.path.join(result_dir, "statistics.csv")
         if os.path.exists(self.stat_csv):
