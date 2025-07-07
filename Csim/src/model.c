@@ -1612,7 +1612,7 @@ void conv2D(ConvolutionTensor* output, const ConvolutionTensor* input,
                 if (ih >= 0 && ih < input->height && iw >= 0 && iw < input->width) {
                   input_buffer[CONVTENSOR_INDEX(tile_in_height, tile_in_width, ic, h, w)] =
                     input->x[CONVTENSOR_INDEX(input->height, input->width, ic + ic_tile, ih, iw)];
-                  STATISTICS_INC_SRAM_READ(stat, sizeof(DATA_TYPE));
+                  STATISTICS_INC_DRAM_TO_SRAM(stat, sizeof(DATA_TYPE));
                 } else {
                   input_buffer[CONVTENSOR_INDEX(tile_in_height, tile_in_width, ic, h, w)] = 0; // Zero padding
                 }

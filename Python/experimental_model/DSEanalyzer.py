@@ -52,7 +52,7 @@ def collect_data(operator_filter: str = None):
         if operator_filter:
             df = df[df["Operation Name"].str.contains(operator_filter, case=False, na=False)]
             if df.empty:
-                continue  
+                continue
 
         latency = compute_latency(df)
         sram_used = df['SRAM used'].max()
@@ -90,3 +90,6 @@ if __name__ == "__main__":
         print(f"No data found for operator: {args.op}")
     else:
         plot_latency_vs_sram(df)
+
+
+# TODO: Implement the DSEanalyzer class to handle more complex analysis.
