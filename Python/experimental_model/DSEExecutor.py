@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from experimental_model.SramTileParameters import SramTileParameters
 import subprocess
 import shutil
@@ -118,7 +119,7 @@ class DSEExecutor:
     def task_num(self):
         return len(self.parameters)
 
-    def execute(self):
+    def execute(self, n_threads: int = 1):
 
         def run_task(params: SramTileParameters):
             task_name = f"task_{params.hash}"
@@ -142,6 +143,8 @@ class DSEExecutor:
             finally:
                 csim_task.cleanup()
 
-        ## TODO: Add parallel execution
-        for params in tqdm(self.parameters, desc="Executing DSE tasks", unit="task"):
-            run_task(params)
+        with ThreadPoolExecutor(max_workers=n_threads) as executor:
+            futures = [executor.submit(run_task, p) for p in self.parameters]
+
+            for _ in tqdm(as_completed(futures), total=len(futures), desc="Executing DSE tasks", unit="task"):
+                pass  # You can handle results here if needed (e.g., future.result())

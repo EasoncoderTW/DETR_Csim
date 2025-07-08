@@ -1,0 +1,25 @@
+{
+    "SRAM_DEFAULT_SIZE": 8388608,
+    "sweep": {
+        "CONV_TILED_OUT_HEIGHT": {
+          "range":  [1, 128], 
+          "type": "log",
+          "step": 2
+        }, 
+        "CONV_TILED_OUT_WIDTH": {
+            "range":  [1, 128], 
+            "type": "log",
+            "step": 2
+        },
+        "CONV_TILED_OUT_CHANNELS": {
+            "range":  [1, 128], 
+            "type": "log",
+            "step": 2
+        },
+        "CONV_TILED_IN_CHANNELS": {
+            "range":  [1, 128], 
+            "type": "log",
+            "step": 2
+        }
+    }
+}

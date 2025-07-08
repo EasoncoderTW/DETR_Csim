@@ -8,7 +8,7 @@ import json
 # -----------------------------
 @dataclass
 class SramTileParameters:
-    CONV_TILED_OUT_HEIGHT: int
+    CONV_TILED_OUT_HEIGHT: int = 32
     SRAM_DEFAULT_SIZE: int = 8388608 # 8 MB
     CONV_TILED_OUT_WIDTH: int = 32
     CONV_TILED_OUT_CHANNELS: int = 128
