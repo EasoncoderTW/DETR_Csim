@@ -1,9 +1,10 @@
-from SramTileParameters import SramTileParameters
+from experimental_model.SramTileParameters import SramTileParameters
 import subprocess
 import shutil
 import os
 from typing import List
 from tqdm import tqdm
+import glob
 
 
 # -----------------------------
@@ -22,7 +23,11 @@ class Compileparams:
 
     @property
     def command(self):
-        return f"{self.CC} {self.CFLAGS} {self.DEFS} -I{self.INCLUDE_DIR} {self.SRC_DIR}/*.c -o {self.OUTPUT_DIR}/{self.BINARY_NAME} {self.LINK_FLAGS}"
+        c_files = glob.glob(os.path.join(self.SRC_DIR, "**/*.c"), recursive=True)
+        if not c_files:
+            raise FileNotFoundError(f"No C source files found in {self.SRC_DIR}")
+        c_files_str = " ".join(c_files)
+        return f"{self.CC} {self.CFLAGS} {self.DEFS} -I{self.INCLUDE_DIR} {c_files_str} -o {self.OUTPUT_DIR}/{self.BINARY_NAME} {self.LINK_FLAGS}"
 
 
 class Runparams:
@@ -43,36 +48,39 @@ class CsimTask:
     def __init__(self, task_name: str, params: SramTileParameters, root_dir: str = ".", csim_dir: str = "Csim", output_dir: str = "output"):
         self.task_name = task_name
         self.params = params
-        self.output_dir = os.path.join(output_dir, task_name)
-        self.stat_csv = os.path.join(self.output_dir, "statistics.csv")
         self.root_dir = root_dir
+        self.output_dir = os.path.join(self.root_dir, output_dir, task_name)
+        self.debug_dir = os.path.join(self.root_dir, "debug", task_name)
+        self.stat_csv = os.path.join(self.output_dir, "statistics.csv")
+
         self.gcc_params = Compileparams(
-            SRC_DIR=os.path.join(root_dir, csim_dir, "src"),
+            SRC_DIR=os.path.join(root_dir, csim_dir),
             INCLUDE_DIR=os.path.join(root_dir, csim_dir, "include"),
             DEFS="-DSRAM_DEFINE_EXTERN -DANALYZE -DSTATISTICS_CSV_FILENAME=\\\"{}\\\" {}".format(self.stat_csv, self.params.CDEFS),
-            OUTPUT_DIR=os.path.join(root_dir, self.output_dir),
+            OUTPUT_DIR=os.path.join(self.output_dir),
             BINARY_NAME="detr"
         )
         self.run_params = Runparams(
-            BINARY=os.path.join(root_dir, self.output_dir, "detr"),
+            BINARY=os.path.join(self.output_dir, "detr"),
             CONFIG_FILE=os.path.join(root_dir, "model_bundle/config.json"),
             WEIGHT_FILE=os.path.join(root_dir, "model_bundle/detr_weight.bin"),
             INPUT_FILE=os.path.join(root_dir, "model_bundle/model_input.bin"),
-            OUTPUT_BOXES=os.path.join(root_dir, self.output_dir, "Csim/model_output_boxes.bin"),
-            OUTPUT_SCORES=os.path.join(root_dir, self.output_dir, "Csim/model_output_scores.bin"),
-            LOG_FILE=os.path.join(root_dir, self.output_dir, "log/output.log")
+            OUTPUT_BOXES=os.path.join(self.output_dir, "Csim/model_output_boxes.bin"),
+            OUTPUT_SCORES=os.path.join(self.output_dir, "Csim/model_output_scores.bin"),
+            LOG_FILE=os.path.join(self.output_dir, "log/output.log")
         )
 
     def compile(self):
-        print(f"[INFO] Compiling with flags: {self.params.CDEFS}")
+        # print(f"[INFO] Compiling with flags: {self.params.CDEFS}")
+        print("[DEBUG] GCC Command:", self.gcc_params.command)
         os.makedirs(self.gcc_params.OUTPUT_DIR, exist_ok=True)
         result = subprocess.run(self.gcc_params.command, shell=True)
         if result.returncode != 0:
             raise RuntimeError("Compilation failed")
 
     def run(self):
-        os.makedirs(os.path.join(self.root_dir, "output", "Csim", "debug"), exist_ok=True)
-        os.makedirs(os.path.join(self.root_dir, "log"), exist_ok=True)
+        os.makedirs(os.path.join(self.output_dir, "log"), exist_ok=True)
+        os.makedirs(os.path.join(self.debug_dir, "log"), exist_ok=True)
 
         result = subprocess.run(self.run_params.command, shell=True)
         if result.returncode != 0:
@@ -91,8 +99,8 @@ class CsimTask:
         shutil.rmtree(os.path.join(self.output_dir), ignore_errors=True)
         print(f"[INFO] Cleaned up output directory: {self.output_dir}")
 # -----------------------------
-class DSEexecutor:
-    def __init__(self, parameters: List[SramTileParameters] ,root_dir: str = ".", csim_dir: str = "Csim", output_dir: str = "output"):
+class DSEExecutor:
+    def __init__(self, parameters: List[SramTileParameters] ,root_dir: str = ".", csim_dir: str = "Csim", output_dir: str = "output", dse_database=None):
         """
         Initialize the DSE executor with a list of parameters.
 
@@ -105,6 +113,7 @@ class DSEexecutor:
         self.root_dir = root_dir
         self.csim_dir = csim_dir
         self.output_dir = output_dir
+        self.dse_database = dse_database
     @property
     def task_num(self):
         return len(self.parameters)
@@ -124,8 +133,12 @@ class DSEexecutor:
                 csim_task.compile()
                 csim_task.run()
                 csim_task.archive_results()
+                if self.dse_database:
+                    self.dse_database.save_to_db(params, params.hash, "ok")
             except RuntimeError as e:
                 print(f"[ERROR] Task {task_name} failed: {e}")
+                if self.dse_database:
+                    self.dse_database.save_to_db(params, params.hash, "error")
             finally:
                 csim_task.cleanup()
 
