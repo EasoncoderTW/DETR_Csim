@@ -9,7 +9,7 @@ class DSEDatabase:
     It provides methods to initialize the database, check if a configuration has already been tried,
     and save results to the database.
     """
-    
+
     def __init__(self, db_path: str = "./dse_results.db"):
         self.db_path = db_path
         self.table = "dse_results"
@@ -64,3 +64,18 @@ class DSEDatabase:
 
         conn.commit()
         conn.close()
+
+    def load_from_db(self, config_hash: str) -> SramTileParameters:
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM {self.table} WHERE {self.primary_key}=?", (config_hash,))
+        row = cur.fetchone()
+        conn.close()
+
+        if row is None:
+            raise ValueError(f"No configuration found for hash: {config_hash}")
+
+        param_dict = dict(zip([self.primary_key] + self.param_fields, row))
+        # Convert the dictionary to a SramTileParameters object
+        param_dict.pop(self.primary_key)  # Remove the primary key from the parameters
+        return SramTileParameters(**param_dict)

@@ -20,17 +20,18 @@ COLUMNS = [
 ]
 
 class Analyzer(object):
-    def __init__(self, csvfile: str, out_dir: str = ""):
+    def __init__(self, csvfile: str = "", out_dir: str = ""):
         self.out_dir = out_dir
         self.csvfile = ""
         self.df = pd.DataFrame()
         if csvfile:
             self.load(csvfile)
 
-    def load(self, csvfile: str):
+    def load(self, csvfile: str, verbose: bool = True):
         self.csvfile = csvfile
         self.df = pd.read_csv(csvfile)
-        print(f"Load CSV file from: {csvfile}, total {len(self.df)} records.")
+        if verbose:
+            print(f"Load CSV file from: {csvfile}, total {len(self.df)} records.")
 
     @property
     def head(self, n: int = 5):
