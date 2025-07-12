@@ -102,6 +102,22 @@ py_analyze: # plot statistic result
 		--input_csv $(STATISTIC_CSV) \
 		--out_dir $(OUTPUT_DIR)
 
+py_profile: # profile the model inference
+	$(PYTHON) $(PYTHON_UTILS_DIR)/Profiler.py \
+		--repo_or_dir '$(MODEL_REF)'\
+		--model '$(MODEL_NAME)'\
+		--output './output' \
+		--in_channels 3 \
+		--in_size 800 \
+		--device 'cpu' \
+		--profile_memory true
+
+py_parse: # parse the model output
+	$(PYTHON) $(PYTHON_UTILS_DIR)/ModelParser.py \
+		--repo_or_dir '$(MODEL_REF)'\
+		--model '$(MODEL_NAME)'\
+
+
 debug: # build and run Csim with debug options
 	make build DEBUG=1 DUMP=1 ANALYZE=1
 
