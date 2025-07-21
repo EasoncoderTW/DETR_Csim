@@ -106,14 +106,13 @@ class Analyzer(object):
         self.op_avg.to_csv(self.csvfile.replace(".csv", "_avg.csv"))
         self.op_sum.to_csv(self.csvfile.replace(".csv", "_sum.csv"))
 
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="Analyze and plot the statistic result.")
+def get_parser(add_help=True):
+    parser = argparse.ArgumentParser(description="Analyze and plot the statistic result.", add_help=add_help)
     parser.add_argument('-i', '--input_csv', required=True, help="Path to  statistic CSV file.")
     parser.add_argument('-o', '--out_dir', required=True, help="Path to save the analyze result and plot image.")
-    return parser.parse_args()
+    return parser
 
-def main():
-    args = parse_arguments()
+def run_analyzer(args):
     analyzer = Analyzer(args.input_csv, args.out_dir)
 
     # create sub-folder by datetime in the output directory
@@ -129,5 +128,9 @@ def main():
 
     analyzer.save_csv()
 
+def main(args):
+    run_analyzer(args)
+
 if __name__ == "__main__":
-    main()
+    args = get_parser().parse_args()
+    main(args)

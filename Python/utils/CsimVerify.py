@@ -40,17 +40,16 @@ def verify(csim_path, golden_path, data_type, rtol, atol):
                 print("\033[92mMatch!\033[0m")
 
 
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="Verify tensors from csim binary with Python golden.")
+def get_parser(add_help=True):
+    parser = argparse.ArgumentParser(description="Verify tensors from csim binary with Python golden.", add_help=add_help)
     parser.add_argument('-c', '--csim', required=True, help="Path to csim binary files.")
     parser.add_argument('-g', '--golden', required=True, help="Path to Python golden binary files.")
     parser.add_argument('-dtype', '--data_type', required=True, choices=['fp32', 'fp16'], help="Data type of the tensors.")
     parser.add_argument('-r', '--rtol', type=float, default=1e-6, help="Relative tolerance for comparison.")
     parser.add_argument('-a', '--atol', type=float, default=1e-3, help="Absolute tolerance for comparison.")
-    return parser.parse_args()
+    return parser
 
-def main():
-    args = parse_arguments()
+def run_csim_verify(args):
     csim_path = args.csim
     golden_path = args.golden
 
@@ -69,5 +68,9 @@ def main():
 
     verify_result = verify(csim_path, golden_path, args.data_type, args.rtol, args.atol)
 
+def main(args):
+    run_csim_verify(args)
+
 if __name__ == "__main__":
-    main()
+    args = get_parser().parse_args()
+    main(args)

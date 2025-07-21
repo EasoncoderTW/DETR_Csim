@@ -38,16 +38,27 @@ class TensorInfo(dict):
 class ModelWeight(object):
     DATA_TYPE = {
         "fp32": 0,
+        "int8": 1,
     }
 
     PACK_MATHED = {
         "normal": 0,
+        "qpack": 1,
     }
 
     def __init__(self, torch_model, dict_version = 1,**kargs):
-        self.model = torch_model.cpu()
+        # torch_model: torch.nn.Module or dict
+        if isinstance(torch_model, torch.nn.Module):
+            # If it's a torch model, get the state_dict
+            self.model_state_dict = torch_model.state_dict()
+        elif isinstance(torch_model, dict):
+            # If it's a dict, use it directly
+            self.model_state_dict = torch_model
+        else:
+            raise TypeError("torch_model must be a torch.nn.Module or a dict")
         self.version = dict_version
-        self.kargs = kargs
+        self.pack_method = kargs.get('pack_method', "normal")
+        self.data_type = kargs.get('data_type', "fp32")
 
     def format_bytes(self, size):
         # 2**10 = 1024
@@ -64,9 +75,9 @@ class ModelWeight(object):
         bias_count = 0
         other_count = 0
         tensor_size = 0
-        for param_tensor in self.model.state_dict():
+        for param_tensor in self.model_state_dict:
             name = param_tensor.split('.')
-            tensor = self.model.state_dict()[param_tensor]
+            tensor = self.model_state_dict[param_tensor]
             if name[-1] == "weight":
                 weight_count+=1
             elif name[-1] == "bias":
@@ -88,8 +99,8 @@ class ModelWeight(object):
         data = bytes()
 
         tensor_count = 0
-        for tensor_name in tqdm(self.model.state_dict(), "Processing Weight "):
-            tensor = self.model.state_dict()[tensor_name]
+        for tensor_name in tqdm(self.model_state_dict, "Processing Weight "):
+            tensor = self.model_state_dict[tensor_name]
 
             # pack into bytes
             tensor_name_Cstr_bytes = bytes(tensor_name+'\0', 'ascii')
@@ -97,7 +108,7 @@ class ModelWeight(object):
 
             info = TensorInfo(
                         id=tensor_count,
-                        data_type = ModelWeight.DATA_TYPE['fp32'],
+                        data_type = ModelWeight.DATA_TYPE[self.data_type],
                         data_offset = len(data),
                         data_size = len(data_bytes),
                         name_offset = len(name),
@@ -114,7 +125,7 @@ class ModelWeight(object):
         HEAD_SIZE = 24
         head += struct.pack('I',self.version) # version
         head += struct.pack('I',tensor_count) # tensor count
-        head += struct.pack('I',ModelWeight.PACK_MATHED['normal']) # packmethod
+        head += struct.pack('I',ModelWeight.PACK_MATHED[self.pack_method]) # packmethod
         head += struct.pack('I',HEAD_SIZE) # info offset
         head += struct.pack('I',HEAD_SIZE+len(table)) # name offset
         head += struct.pack('I',HEAD_SIZE+len(table)+len(name)) # data offset
@@ -153,20 +164,20 @@ def normal_pack(tensor_name:str, tensor:torch.Tensor)->bytes:
 
 import argparse
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Export model weights to binary")
+def get_parser(add_help=True):
+    parser = argparse.ArgumentParser(description="Export model weights to binary", add_help=add_help)
 
     parser.add_argument(
         "-r", "--repo_or_dir",
         type=str,
-        required=True,
+        default="facebookresearch/detr:main",
         help="Repo name (e.g. 'facebookresearch/detr:main') or local dir"
     )
 
     parser.add_argument(
         "-m", "--model",
         type=str,
-        required=True,
+        default="detr_resnet50",
         help="Model name (e.g. 'detr_resnet50')"
     )
 
@@ -184,11 +195,16 @@ def parse_args():
         help="List model weights"
     )
 
+    parser.add_argument(
+        "-p", "--peek",
+        type=bool,
+        default=False,
+        required=False,
+        help="Peek at the model weights without saving"
+    )
+    return parser
 
-    return parser.parse_args()
-
-if __name__ == "__main__":
-    args = parse_args()
+def run_model_weight(args):
     print("Repo or dir:", args.repo_or_dir)
     print("Model:", args.model)
     print("Output path:", args.output)
@@ -198,7 +214,17 @@ if __name__ == "__main__":
     MD = ModelWeight(model)
     if args.list:
         print("Model weights:")
-        for name, tensor in model.state_dict().items():
+        for name, tensor in MD.model_state_dict.items():
             print(f"{name}: {tensor.shape}")
     MD.summary()
-    MD.save_state_dict(args.output, normal_pack)
+
+    if not args.peek:
+        MD.save_state_dict(args.output, normal_pack)
+
+
+def main(args):
+    run_model_weight(args)
+
+if __name__ == "__main__":
+    args = get_parser().parse_args()
+    main(args)

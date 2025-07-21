@@ -64,7 +64,7 @@ class ModelInference(object):
         """
         # Preprocess the input data
         self.raw_input = image # Store the raw input data
-        input_data = self.preprocess(image)
+        input_data = self._preprocess(image)
         self.model_input = input_data # Store the input data
         # Perform inference
         self.model.eval()
@@ -72,7 +72,7 @@ class ModelInference(object):
             output = self.model(input_data)
         # Postprocess the output data
         self.model_output = output # Store the output data
-        output = self.postprocess(output)
+        output = self._postprocess(output)
         return output
 
     # for output bounding box post-processing
@@ -89,7 +89,7 @@ class ModelInference(object):
         b = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32)
         return b
 
-    def preprocess(self, image: np.ndarray, **kargs) -> torch.Tensor:
+    def _preprocess(self, image: np.ndarray, **kargs) -> torch.Tensor:
         """
         Preprocess the input data for the model.
 
@@ -100,8 +100,8 @@ class ModelInference(object):
             torch.Tensor: Preprocessed input data.
         """
         # Example preprocessing: normalize the input data
-        mean = kargs.get('mean', [0.485, 0.456, 0.406])
-        std = kargs.get('std', [0.229, 0.224, 0.225])
+        mean = self.kargs.get('mean', [0.485, 0.456, 0.406])
+        std = self.kargs.get('std', [0.229, 0.224, 0.225])
         transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Resize((800, 800)),
@@ -110,8 +110,8 @@ class ModelInference(object):
         image_tensor = transform(image).unsqueeze(0)  # 增加 batch 維度
         return image_tensor
 
-    def postprocess(self, output: Any, **kargs) -> Any:
-        thresh = kargs.get('threshold', 0.7)
+    def _postprocess(self, output: Any, **kargs) -> Any:
+        thresh = self.kargs.get('threshold', 0.7)
         # keep only predictions with 0.7+ confidence
         probas = output['pred_logits'].softmax(-1)[0, :, :-1]
         keep = probas.max(-1).values > thresh
@@ -231,19 +231,19 @@ def plot_and_save_results(pil_img, prob, boxes, save_path="output.png"):
 #############
 import argparse
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='DETR Model Inference')
+def get_parser(add_help=True):
+    parser = argparse.ArgumentParser(description='DETR Model Inference', add_help=add_help)
     parser.add_argument(
         "-r", "--repo_or_dir",
         type=str,
-        required=True,
+        default='facebookresearch/detr:main',
         help="Repo name (e.g. 'facebookresearch/detr:main') or local dir"
     )
 
     parser.add_argument(
         "-m", "--model",
         type=str,
-        required=True,
+        default='detr_resnet50',
         help="Model name (e.g. 'detr_resnet50')"
     )
 
@@ -265,19 +265,17 @@ def parse_args():
     parser.add_argument(
         "-v", "--verbose",
         action='store_true',
+        default=False,
         help="Store the output of each layer"
     )
 
 
-    return parser.parse_args()
+    return parser
 
-if __name__ == "__main__":
+def run_inference(args):
     # fixme the random seed for reproducibility
     torch.manual_seed(123)
     np.random.seed(123)
-
-    # Parse command line arguments
-    args = parse_args()
 
     # Load the image
     image = Image.open(args.image_path).convert("RGB")
@@ -299,3 +297,12 @@ if __name__ == "__main__":
     model_inference.show_final_output()
     # Plot and save the results
     plot_and_save_results(image, output['scores'], output['boxes'], save_path="./output/output.png")
+
+def main(args):
+    # Run the inference with the provided arguments
+    run_inference(args)
+
+if __name__ == "__main__":
+    # Parse command line arguments
+    args = get_parser().parse_args()
+    main(args)
