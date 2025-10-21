@@ -73,7 +73,7 @@ visualize_detections: # visualize csim detection results
 		--output_path '$(OUTPUT_DIR)/Csim/detection_output.png' \
 		--score_path '$(OUTPUT_DIR)/Csim/model_output_scores.bin' \
 		--boxes_path '$(OUTPUT_DIR)/Csim/model_output_boxes.bin' \
-		--threshold 0.6
+		--threshold 0.7
 
 help: # display help message
 	@echo "\033[1;34mPython-related targets:\033[0m"

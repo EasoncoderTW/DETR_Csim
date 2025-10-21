@@ -343,130 +343,6 @@ void maxpooling2D(ConvolutionTensor* output, const ConvolutionTensor* input,
 }
 
 /**
-  * Applies layer normalization with SRAM tiling.
-  *
-  * @param out The output array.
-  * @param x The input array.
-  * @param w The weights array.
-  * @param b The bias array.
-  * @param n The number of elements.
-  * @param dim The dimension of each element.
-  */
-void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
-      int dim) {
-  assert(out != NULL);
-  assert(x != NULL);
-  assert(w != NULL);
-  assert(b != NULL);
-  DEBUG_LOG("n = %d, dim = %d", n, dim);
-  const DATA_TYPE eps = 1e-5;
-
-  STATISTICS_CREATE(stat);
-
-  // Initialize SRAM manager
-  SRAM_Manager_t sram;
-  sram_init(&sram, SRAM_DEFAULT_SIZE);
-
-  // Tiling parameters (can be configured)
-  int tile_n = LAYERNORM_TILED_N;   // Number of elements per tile
-
-  // Buffers for data reuse
-  DATA_TYPE* x_buffer = (DATA_TYPE*)sram_alloc(&sram, tile_n * dim * sizeof(DATA_TYPE));
-  DATA_TYPE* w_buffer = (DATA_TYPE*)sram_alloc(&sram, dim * sizeof(DATA_TYPE));
-  DATA_TYPE* b_buffer = (DATA_TYPE*)sram_alloc(&sram, dim * sizeof(DATA_TYPE));
-  DATA_TYPE* out_buffer = (DATA_TYPE*)sram_alloc(&sram, tile_n * dim * sizeof(DATA_TYPE));
-
-  // Load weights and biases into buffers
-  memcpy(w_buffer, w, dim * sizeof(DATA_TYPE));
-  memcpy(b_buffer, b, dim * sizeof(DATA_TYPE));
-  STATISTICS_INC_DRAM_TO_SRAM(stat, dim * sizeof(DATA_TYPE) * 2); // w, b
-
-  // Perform tiled layer normalization (on dimension dim)
-  for (int n_tile = 0; n_tile < n; n_tile += tile_n) {
-    int current_tile_n = (n_tile + tile_n > n) ? (n - n_tile) : tile_n;
-
-    //
-    // Compute in SRAM
-    //
-
-    // Load input tile into x buffer (dim, n)
-    for (int i = 0; i < current_tile_n; i++) {
-      for (int d = 0; d < dim; d++) {
-        x_buffer[d * current_tile_n + i] = x[d * n + i + n_tile];
-        STATISTICS_INC_DRAM_TO_SRAM(stat, sizeof(DATA_TYPE)); // read x
-      }
-    }
-
-    // Perform layer normalization for the current tile
-    for (int i = 0; i < current_tile_n; i++) {
-      DATA_TYPE mean = 0.0f;
-      DATA_TYPE variance = 0.0f;
-
-      // Compute mean
-      for (int d = 0; d < dim; d++) {
-
-        // OP: add
-        mean += x_buffer[d * current_tile_n + i];
-      }
-
-      // OP: divide
-      mean /= dim;
-      STATISTICS_INC_ADD(stat, dim); // mean addition
-      STATISTICS_INC_SRAM_READ(stat, dim * sizeof(DATA_TYPE)); // read x_buffer
-      STATISTICS_INC_DIV(stat, 1);
-
-      // Compute variance
-      for (int d = 0; d < dim; d++) {
-        // OP: sub
-        DATA_TYPE diff = x_buffer[d * current_tile_n + i] - mean;
-        // OP: square and add
-        variance += diff * diff;
-      }
-      variance /= dim;
-      STATISTICS_INC_MAC(stat, dim); // variance addition
-      STATISTICS_INC_SRAM_READ(stat, dim * sizeof(DATA_TYPE)); // read x_buffer
-      STATISTICS_INC_DIV(stat, 1); // variance division
-
-      // Normalize and apply scale and bias
-      for (int d = 0; d < dim; d++) {
-        // OPs: normalize, scale, and bias
-        DATA_TYPE normalized = (x_buffer[d * current_tile_n + i] - mean) / sqrtf(variance + eps);
-        // OP: scale and bias
-        out_buffer[d * current_tile_n + i] = normalized * w_buffer[d] + b_buffer[d];
-      }
-
-      STATISTICS_INC_MAC(stat, dim * 2); // scale and bias
-      STATISTICS_INC_NON_LINEAR_OP(stat, dim); // sqrt
-      STATISTICS_INC_ADD(stat, dim * 2); // mean subtraction and bias addition
-      STATISTICS_INC_DIV(stat, dim); // variance normalization
-    }
-
-    // Write output tile back to DRAM
-    for (int i = 0; i < current_tile_n; i++) {
-      for (int d = 0; d < dim; d++) {
-        out[d * n + i + n_tile] = out_buffer[d * current_tile_n + i];
-        STATISTICS_INC_SRAM_TO_DRAM(stat, sizeof(DATA_TYPE)); // write out
-      }
-    }
-
-    //
-    // Compute in SRAM (end)
-    //
-  } // n_tile
-
-  STATISTICS_SET_SRAM_SIZE(stat, sram.sram_size);
-  STATISTICS_SET_SRAM_USED(stat, sram.used_size);
-
-  DEBUG_LOG("SRAM usage: %zu bytes, SRAM size: %zu bytes (%.2f%% used)",
-  sram.used_size, sram.sram_size, (float)sram.used_size / sram.sram_size * 100.0f);
-
-  // Free buffers
-  sram_free_all(&sram);
-  // save statistics
-  STATISTICS_APPEND_CSV(stat);
-}
-
-/**
   * Applies batch normalization with SRAM tiling.
   *
   * @param output The output ConvolutionTensor.
@@ -939,4 +815,129 @@ void multihead_attention(DATA_TYPE* out, DATA_TYPE* qx, DATA_TYPE* kx,
   // Save statistics
   STATISTICS_APPEND_CSV(stat_softmax);
   STATISTICS_APPEND_CSV(stat_self_attn);
+}
+
+
+/**
+  * Applies layer normalization with SRAM tiling.
+  *
+  * @param out The output array.
+  * @param x The input array.
+  * @param w The weights array.
+  * @param b The bias array.
+  * @param n The number of elements.
+  * @param dim The dimension of each element.
+  */
+void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
+    int dim) {
+  assert(out != NULL);
+  assert(x != NULL);
+  assert(w != NULL);
+  assert(b != NULL);
+  DEBUG_LOG("n = %d, dim = %d", n, dim);
+  const DATA_TYPE eps = 1e-5;
+
+  STATISTICS_CREATE(stat);
+
+  // Initialize SRAM manager
+  SRAM_Manager_t sram;
+  sram_init(&sram, SRAM_DEFAULT_SIZE);
+
+  // Tiling parameters (can be configured)
+  int tile_n = LAYERNORM_TILED_N;   // Number of elements per tile
+
+  // Buffers for data reuse
+  DATA_TYPE* x_buffer = (DATA_TYPE*)sram_alloc(&sram, tile_n * dim * sizeof(DATA_TYPE));
+  DATA_TYPE* w_buffer = (DATA_TYPE*)sram_alloc(&sram, dim * sizeof(DATA_TYPE));
+  DATA_TYPE* b_buffer = (DATA_TYPE*)sram_alloc(&sram, dim * sizeof(DATA_TYPE));
+  DATA_TYPE* out_buffer = (DATA_TYPE*)sram_alloc(&sram, tile_n * dim * sizeof(DATA_TYPE));
+
+  // Load weights and biases into buffers
+  memcpy(w_buffer, w, dim * sizeof(DATA_TYPE));
+  memcpy(b_buffer, b, dim * sizeof(DATA_TYPE));
+  STATISTICS_INC_DRAM_TO_SRAM(stat, dim * sizeof(DATA_TYPE) * 2); // w, b
+
+  // Perform tiled layer normalization (on dimension dim)
+  for (int n_tile = 0; n_tile < n; n_tile += tile_n) {
+    int current_tile_n = (n_tile + tile_n > n) ? (n - n_tile) : tile_n;
+
+    //
+    // Compute in SRAM
+    //
+
+    // Load input tile into x buffer (dim, n)
+    for (int i = 0; i < current_tile_n; i++) {
+      for (int d = 0; d < dim; d++) {
+        x_buffer[d * current_tile_n + i] = x[d * n + i + n_tile];
+        STATISTICS_INC_DRAM_TO_SRAM(stat, sizeof(DATA_TYPE)); // read x
+      }
+    }
+
+    // Perform layer normalization for the current tile
+    for (int i = 0; i < current_tile_n; i++) {
+      DATA_TYPE mean = 0.0f;
+      DATA_TYPE variance = 0.0f;
+
+      // Compute mean
+      for (int d = 0; d < dim; d++) {
+
+        // OP: add
+        mean += x_buffer[d * current_tile_n + i];
+      }
+
+      // OP: divide
+      mean /= dim;
+      STATISTICS_INC_ADD(stat, dim); // mean addition
+      STATISTICS_INC_SRAM_READ(stat, dim * sizeof(DATA_TYPE)); // read x_buffer
+      STATISTICS_INC_DIV(stat, 1);
+
+      // Compute variance
+      for (int d = 0; d < dim; d++) {
+        // OP: sub
+        DATA_TYPE diff = x_buffer[d * current_tile_n + i] - mean;
+        // OP: square and add
+        variance += diff * diff;
+      }
+      variance /= dim;
+      STATISTICS_INC_MAC(stat, dim); // variance addition
+      STATISTICS_INC_SRAM_READ(stat, dim * sizeof(DATA_TYPE)); // read x_buffer
+      STATISTICS_INC_DIV(stat, 1); // variance division
+
+      // Normalize and apply scale and bias
+      for (int d = 0; d < dim; d++) {
+        // OPs: normalize, scale, and bias
+        DATA_TYPE normalized = (x_buffer[d * current_tile_n + i] - mean) / sqrtf(variance + eps);
+        // OP: scale and bias
+        out_buffer[d * current_tile_n + i] = normalized * w_buffer[d] + b_buffer[d];
+      }
+
+      STATISTICS_INC_MAC(stat, dim * 2); // scale and bias
+      STATISTICS_INC_NON_LINEAR_OP(stat, dim); // sqrt
+      STATISTICS_INC_ADD(stat, dim * 2); // mean subtraction and bias addition
+      STATISTICS_INC_DIV(stat, dim); // variance normalization
+    }
+
+    // Write output tile back to DRAM
+    for (int i = 0; i < current_tile_n; i++) {
+      for (int d = 0; d < dim; d++) {
+        out[d * n + i + n_tile] = out_buffer[d * current_tile_n + i];
+        STATISTICS_INC_SRAM_TO_DRAM(stat, sizeof(DATA_TYPE)); // write out
+      }
+    }
+
+    //
+    // Compute in SRAM (end)
+    //
+  } // n_tile
+
+  STATISTICS_SET_SRAM_SIZE(stat, sram.sram_size);
+  STATISTICS_SET_SRAM_USED(stat, sram.used_size);
+
+  DEBUG_LOG("SRAM usage: %zu bytes, SRAM size: %zu bytes (%.2f%% used)",
+  sram.used_size, sram.sram_size, (float)sram.used_size / sram.sram_size * 100.0f);
+
+  // Free buffers
+  sram_free_all(&sram);
+  // save statistics
+  STATISTICS_APPEND_CSV(stat);
 }
