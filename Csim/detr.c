@@ -58,8 +58,8 @@ int main(int argc, char* argv[]) {
   printf("load input tensor\n");
   load_input_tensor(&image, argv[INPUT_BIN]);
 
-  printf("forward\n");
-  forward(&detr, &image, &result);
+  printf("model_detr\n");
+  model_detr(&detr, &image, &result);
 
 
   for (int i = 0;i<100; i++)
