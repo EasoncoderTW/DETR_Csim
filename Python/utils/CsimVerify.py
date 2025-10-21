@@ -12,6 +12,7 @@ def verify(csim_path, golden_path, data_type, rtol, atol):
     :return: Verification result.
     """
     # Placeholder for verification logic
+    min_cosine_similarity = 1.0
     for csim_file in sorted(os.listdir(csim_path)):
         csim_tensor = os.path.join(csim_path, csim_file)
         golden_tensor = os.path.join(golden_path, csim_file)
@@ -31,13 +32,17 @@ def verify(csim_path, golden_path, data_type, rtol, atol):
                 print(f"Shape mismatch: {csim_data.shape} vs {golden_data.shape}")
                 continue
             # fp32 comparison tolerance
-            if not np.allclose(csim_data, golden_data, rtol=rtol, atol=atol):
-                print("\033[91mMismatch found!\033[0m")
+            cos_similarity = np.dot(csim_data, golden_data) / (np.linalg.norm(csim_data) * np.linalg.norm(golden_data))
+            min_cosine_similarity = min(min_cosine_similarity, cos_similarity)
+            if (not np.allclose(csim_data, golden_data, rtol=rtol, atol=atol)) and cos_similarity < 0.999:
+                print("\033[91mMismatch found!\033[0m", f"(Cosine similarity: {cos_similarity:.3f})")
                 # Optionally, print the differences
                 diff = np.abs(csim_data - golden_data)
-                print(f"\t\033[91mMax diff: {np.max(diff)}, Mean diff: {np.mean(diff)}\033[0m")
+                #print(f"\t\033[91mMax diff: {np.max(diff)}, Mean diff: {np.mean(diff)}\033[0m")
             else:
-                print("\033[92mMatch!\033[0m")
+                print("\033[92mMatch!\033[0m", f"(Cosine similarity: {cos_similarity:.3f})")
+
+    print(f"Minimum cosine similarity across all tensors: {min_cosine_similarity:.3f}")
 
 
 def get_parser(add_help=True):

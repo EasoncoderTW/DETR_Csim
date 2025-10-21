@@ -21,6 +21,9 @@ from utils.Analyzer import get_parser as analyzer_get_parser
 from utils.ONNXParser import ONNXParser, DETR_wrapper
 from utils.ONNXParser import get_parser as onnx_parser_get_parser
 
+from utils.Visualize import run_visualize_detections
+from utils.Visualize import get_parser as visualize_detections_get_parser
+
 def get_detr_tools_parser():
     parser = argparse.ArgumentParser('DETR tools', add_help=True)
     subparsers = parser.add_subparsers(dest='command')
@@ -31,7 +34,8 @@ def get_detr_tools_parser():
         'model_inference': model_inference_get_parser(add_help=False),
         'csim_verify': csim_verify_get_parser(add_help=False),
         'analyzer': analyzer_get_parser(add_help=False),
-        'onnx_export': onnx_parser_get_parser(add_help=False)
+        'onnx_export': onnx_parser_get_parser(add_help=False),
+        'visualize_detections': visualize_detections_get_parser(add_help=False)
     }
 
     for command, subparser in parsers.items():
@@ -49,6 +53,8 @@ def main(args):
         run_csim_verify(args)
     elif args.command == 'analyzer':
         run_analyzer(args)
+    elif args.command == 'visualize_detections':
+        run_visualize_detections(args)
     elif args.command == 'onnx_export':
         model = torch.hub.load(args.repo_or_dir, args.model, pretrained=True)
         onnx_parser = ONNXParser(DETR_wrapper(model=model), args.output)

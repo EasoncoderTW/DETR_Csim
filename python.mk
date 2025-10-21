@@ -26,7 +26,7 @@ ifeq ($(TARGET_IMGAE),)
 TARGET_IMGAE = $(addprefix $(IMAGE_DIR)/, $(shell ls $(IMAGE_DIR) | grep -E '\.(jpg|jpeg|png)' | head -n 1))
 endif
 
-.PHONY: py_gen_weights py_inference csim_verify py_analyze clean_python help
+.PHONY: py_gen_weights py_inference csim_verify py_analyze clean_python visualize_detections help
 
 py_gen_weights: # python script for model weight generation
 	mkdir -p $(INPUT_DIR)
@@ -66,6 +66,14 @@ py_analyze: # plot statistic result
 
 clean_python: # clean Python output
 	rm -rf $(PYTHON_OUTPUT_DIR)
+
+visualize_detections: # visualize csim detection results
+	$(PYTHON) $(PYTHON_DIR)/detr_tools.py visualize_detections \
+		--image_path '$(TARGET_IMGAE)' \
+		--output_path '$(OUTPUT_DIR)/Csim/detection_output.png' \
+		--score_path '$(OUTPUT_DIR)/Csim/model_output_scores.bin' \
+		--boxes_path '$(OUTPUT_DIR)/Csim/model_output_boxes.bin' \
+		--threshold 0.6
 
 help: # display help message
 	@echo "\033[1;34mPython-related targets:\033[0m"

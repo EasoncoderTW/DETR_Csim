@@ -1,13 +1,13 @@
 #ifndef MODEL_H
 #define MODEL_H
 
+#include "utils.h"
+
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/mman.h>
 
-#define DATA_TYPE float
-#define MASK_TYPE uint8_t
 #define CONVTENSOR_INITIALIZER \
   { NULL, 0, 0, 0 }
 #define OUTPUTTENSOR_INITIALIZER \
@@ -286,11 +286,6 @@ typedef struct {
 } DETR;
 
 //**************************************
-// DEBUG API
-//**************************************
-void dump_tensor(const char* name, const DATA_TYPE* tensor, int size);
-
-//**************************************
 // JSON and Config Parsing
 //**************************************
 int extract_int_value(const char* key, const char* json);
@@ -351,14 +346,14 @@ void free_output_run_state(OutputRunState* r);
 //**************************************
 // Model Inference
 //**************************************
-void forward(DETR* detr, ConvolutionTensor* image, OutputTensor* result);
-void forward_resnet50(ResNet50Config* config, ResNet50Weights* weights,
+void model_detr(DETR* detr, ConvolutionTensor* image, OutputTensor* result);
+void model_resnet50(ResNet50Config* config, ResNet50Weights* weights,
                       ConvolutionTensor* image, ConvolutionTensor* result);
-void forward_encoder(TransformerConfig* c, EncoderWeights* w,
+void model_encoder(TransformerConfig* c, EncoderWeights* w,
                      EncoderRunState* r);
-void forward_decoder(TransformerConfig* c, DecoderWeights* w,
+void model_decoder(TransformerConfig* c, DecoderWeights* w,
                      DecoderRunState* r);
-void forward_output(DETRConfig* c, OutputEmbedWeights* w, OutputRunState* r);
+void model_fcn_output(DETRConfig* c, OutputEmbedWeights* w, OutputRunState* r);
 
 //**************************************
 // Operations

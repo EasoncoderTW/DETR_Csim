@@ -18,7 +18,7 @@ WEIGHT_BIN := $(INPUT_DIR)/detr_weight.bin
 CONFIG_JSON := $(INPUT_DIR)/config.json
 
 # config
-CFLAGS := -I$(CSIM_DIR)/utils/include -I$(CSIM_DIR)/model/include -O3 -Wall
+CFLAGS := -I$(CSIM_DIR)/include -O3 -Wall
 LDFLAGS := -lm
 ELF_NAME := detr
 
@@ -35,6 +35,10 @@ ifeq ($(ANALYZE), 1)
 CFLAGS += -DANALYZE -DSTATISTICS_CSV_FILENAME='"$(OUTPUT_DIR)/statistics.csv"'
 endif
 
+ifeq ($(SOLE), 1)
+CFLAGS += -DSOFTMAX_METHOD=SOFTMAX_SOLE
+endif
+
 .PHONY: build run debug valgrind clean_csim help
 
 debug: # build and run Csim with debug options
@@ -44,7 +48,7 @@ build: # build Csim executable
 	mkdir -p $(CSIM_OUTPUT_DIR)
 	$(CC) \
 	$(CFLAGS) \
-	$(CSIM_DIR)/detr.c $(CSIM_DIR)/utils/src/*.c $(CSIM_DIR)/model/src/model.c \
+	$(CSIM_DIR)/detr.c $(CSIM_DIR)/src/*.c \
 	-o $(ELF_NAME) \
 	$(LDFLAGS)
 
