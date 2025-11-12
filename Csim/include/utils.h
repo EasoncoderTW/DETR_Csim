@@ -17,6 +17,13 @@
 #define SOFTMAX_METHOD SOFTMAX_NORMAL
 #endif
 
+#define LAYERNORM_NORMAL 0
+#define LAYERNORM_SOLE 1
+
+#ifndef LAYERNORM_METHOD
+#define LAYERNORM_METHOD LAYERNORM_NORMAL
+#endif
+
 /*
 * ============================
 * MACROS
@@ -103,5 +110,12 @@
 // DEBUG API
 //**************************************
 void dump_tensor(const char* name, const DATA_TYPE* tensor, int size);
+
+//**************************************
+// fp16 clip
+//**************************************
+#ifdef FP16
+float fp16_clip(float x_val);
+#endif
 
 #endif // UTILS_H

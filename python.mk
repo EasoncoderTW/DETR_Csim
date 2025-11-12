@@ -57,7 +57,8 @@ csim_verify: # verify the model output
 		--golden $(PYTHON_OUTPUT_DIR) \
 		--data_type 'fp32' \
 		--rtol 1e-4 \
-		--atol 1e-3
+		--atol 1e-3 \
+		--statistic
 
 py_analyze: # plot statistic result
 	$(PYTHON) $(PYTHON_DIR)/detr_tools.py analyzer \

@@ -37,6 +37,11 @@ endif
 
 ifeq ($(SOLE), 1)
 CFLAGS += -DSOFTMAX_METHOD=SOFTMAX_SOLE
+CFLAGS += -DLAYERNORM_METHOD=LAYERNORM_SOLE
+endif
+
+ifeq ($(FP16), 1)
+CFLAGS += -DFP16
 endif
 
 .PHONY: build run debug valgrind clean_csim help
@@ -79,5 +84,16 @@ clean_csim: # clean Csim output and executable
 	rm -rf $(CSIM_OUTPUT_DIR)
 
 help: # display help message
-	@echo "\033[1;34mC compilation targets:\033[0m"
+	@echo "\033[1;36mC compilation targets:\033[0m"
 	@grep -E '^[a-zA-Z_-]+:.*?#' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?#"}; {printf "\033[1;32m  %-20s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "\033[1;36mAvailable flags:\033[0m"
+	@echo "\033[1;35m  DEBUG=1         \033[0m Enable debug mode"
+	@echo "\033[1;35m  DUMP=1          \033[0m Enable tensor dumping to $(CSIM_DEBUG_DIR)"
+	@echo "\033[1;35m  ANALYZE=1       \033[0m Enable analysis and generate statistics.csv"
+	@echo "\033[1;35m  SOLE=1          \033[0m Use SOLE methods for SOFTMAX and LAYERNORM"
+	@echo "\033[1;35m  FP16=1          \033[0m Enable FP16 precision"
+	@echo ""
+	@echo "\033[1;36mExample usage:\033[0m"
+	@echo "  make -f csim.mk build DEBUG=1 DUMP=1"
+	@echo "  make -f csim.mk debug  # equivalent to DEBUG=1 DUMP=1 ANALYZE=1"
