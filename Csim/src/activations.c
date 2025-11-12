@@ -1,6 +1,7 @@
 #include "model.h"
 #include "statistic.h"
 #include "sram.h"
+#include "utils.h"
 
 
 #include <assert.h>
@@ -63,16 +64,22 @@ void softmax(DATA_TYPE* out, DATA_TYPE* x, int size) {
   DATA_TYPE sum = 0.0f;
   for (i = 0; i < size; i++) {
     out[i] = expf(x[i] - max_val);
+    #ifdef FP16
+    out[i] = fp16_clip(out[i]);
+    #endif
     sum += out[i];
+    #ifdef FP16
+    sum = fp16_clip(sum);
+    #endif
   }
   // normalize
   for (int i = 0; i < size; i++) {
-    out[i] /= sum;
+    #ifdef FP16
+    out[i] = fp16_clip(out[i] / sum);
+    #else
+    out[i] = out[i] / sum;
+    #endif
   }
-
-  DEBUG_LOG("Softmax sum check: %f", sum);
-  DEBUG_LOG("Softmax max value: %f", max_val);
-
 }
 #else // SOFTMAX_METHOD == SOFTMAX_SOLE
 
@@ -147,7 +154,7 @@ void softmax(float* out, float* x, int size)  {
 
   // normalize
   for (int i = 0; i < size; i++) {
-    out[i] = approximate_divide(m[i], sum_i);
+    out[i] = fp16_clip(approximate_divide(m[i], sum_i));
   }
 
   free(y);
@@ -170,7 +177,11 @@ void softmax(float* out, float* x, int size)  {
   int i;
   STATISTICS_CREATE(stat);
   for (i = 0; i < size; i++) {
+    #ifdef FP16
+    out[i] = fp16_clip(1 / (1 + expf(-x[i])));
+    #else
     out[i] = 1 / (1 + expf(-x[i]));
+    #endif
   }
   STATISTICS_INC_DRAM_READ(stat, size * sizeof(DATA_TYPE)); // x
   STATISTICS_INC_DRAM_WRITE(stat, size * sizeof(DATA_TYPE)); // out

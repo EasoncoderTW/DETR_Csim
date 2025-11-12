@@ -165,7 +165,14 @@ void conv2D(ConvolutionTensor* output, const ConvolutionTensor* input,
                         uint32_t w_idx = CONVWEIGHT_INDEX(config->in_channels, config->kernel_size, config->kernel_size, oc, ic + ic_tile, r, c);
 
                         // OP: MAC (Multiply-Accumulate)
-                        sum += input_buffer[x_idx] * weight_buffer[w_idx];
+                        DATA_TYPE m = input_buffer[x_idx] * weight_buffer[w_idx];
+                        #ifdef FP16
+                        m = fp16_clip(m);
+                        #endif
+                        sum += m;
+                        #ifdef FP16
+                        sum = fp16_clip(sum);
+                        #endif
 
                         STATISTICS_INC_MAC(stat, 1);
                         STATISTICS_INC_SRAM_READ(stat, 2 * sizeof(DATA_TYPE));
@@ -411,7 +418,15 @@ void batchnorm2D(ConvolutionTensor* output, const ConvolutionTensor* input,
           for (int h = 0; h < tile_height && (h + h_tile) < H; ++h) {
             for (int w = 0; w < tile_width && (w + w_tile) < W; ++w) {
               int index = CONVTENSOR_INDEX(tile_height, tile_width, c, h, w);
-              output_buffer[index] = input_buffer[index] * scale_buffer[c] + bias_buffer[c];
+              DATA_TYPE m = input_buffer[index] * scale_buffer[c];
+              #ifdef FP16
+              m = fp16_clip(m);
+              #endif
+              m += bias_buffer[c];
+              #ifdef FP16
+              m = fp16_clip(m);
+              #endif
+              output_buffer[index] = m;
             }
           }
           STATISTICS_INC_SRAM_READ(stat, tile_height * tile_width * sizeof(DATA_TYPE)); // input_buffer
@@ -531,7 +546,14 @@ void gemm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
             }
 
             for (int i = 0; i < tile_id && (i + i_tile) < id; ++i) {
-              sum += w_buffer[o * tile_id + i] * x_buffer[i * tile_n + j];
+              DATA_TYPE m = w_buffer[o * tile_id + i] * x_buffer[i * tile_n + j];
+              #ifdef FP16
+              m = fp16_clip(m);
+              #endif
+              sum += m;
+              #ifdef FP16
+              sum = fp16_clip(sum);
+              #endif
               STATISTICS_INC_MAC(stat, 1);
               STATISTICS_INC_SRAM_READ(stat, 2 * sizeof(DATA_TYPE)); // w, x
             }
@@ -613,7 +635,11 @@ void add(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* y, int size) {
 
     // Perform addition for the current tile
     for (int i = 0; i < current_tile_size; i++) {
-      out_buffer[i] = x_buffer[i] + y_buffer[i];
+      DATA_TYPE m = x_buffer[i] + y_buffer[i];
+      #ifdef FP16
+      m = fp16_clip(m);
+      #endif
+      out_buffer[i] = m;
     }
     STATISTICS_INC_SRAM_READ(stat, 2 * current_tile_size * sizeof(DATA_TYPE)); // x_buffer, y_buffer
     STATISTICS_INC_SRAM_WRITE(stat, current_tile_size * sizeof(DATA_TYPE)); // out_buffer
@@ -732,12 +758,23 @@ void multihead_attention(DATA_TYPE* out, DATA_TYPE* qx, DATA_TYPE* kx,
             DATA_TYPE score = 0;
 
             for (int d = 0; d < head_size; ++d) {
-              score += q_buffer[d * tile_q_len + q] * k_buffer[d * tile_kv_len + k];
+              DATA_TYPE m = q_buffer[d * tile_q_len + q] * k_buffer[d * tile_kv_len + k];
+              #ifdef FP16
+              m = fp16_clip(m);
+              #endif
+              score += m;
+              #ifdef FP16
+              score = fp16_clip(score);
+              #endif
             }
             STATISTICS_INC_MAC(stat_self_attn, head_size);
             STATISTICS_INC_SRAM_READ(stat_self_attn, 2 * head_size * sizeof(DATA_TYPE));
 
-            att_buffer[q * kv_len + (k + k_tile)] = score / head_size_sqrt;
+            DATA_TYPE dv = score / head_size_sqrt;
+            #ifdef FP16
+            dv = fp16_clip(dv);
+            #endif
+            att_buffer[q * kv_len + (k + k_tile)] = dv;
             STATISTICS_INC_DIV(stat_self_attn, 1);
             STATISTICS_INC_SRAM_WRITE(stat_self_attn, sizeof(DATA_TYPE));
           }
@@ -777,7 +814,14 @@ void multihead_attention(DATA_TYPE* out, DATA_TYPE* qx, DATA_TYPE* kx,
             }
 
             for (int v = 0; v < tile_kv_len && (v + v_tile) < kv_len; ++v) {
-              sum += att_buffer[q * kv_len + (v + v_tile)] * v_buffer[d * tile_kv_len + v];
+              DATA_TYPE m = att_buffer[q * kv_len + (v + v_tile)] * v_buffer[d * tile_kv_len + v];
+              #ifdef FP16
+              m = fp16_clip(m);
+              #endif
+              sum += m;
+              #ifdef FP16
+              sum = fp16_clip(sum);
+              #endif
             }
             STATISTICS_INC_MAC(stat_self_attn, kv_len);
             STATISTICS_INC_SRAM_READ(stat_self_attn, 2 * kv_len * sizeof(DATA_TYPE));
@@ -828,6 +872,7 @@ void multihead_attention(DATA_TYPE* out, DATA_TYPE* qx, DATA_TYPE* kx,
   * @param n The number of elements.
   * @param dim The dimension of each element.
   */
+#if LAYERNORM_METHOD==LAYERNORM_NORMAL
 void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
     int dim) {
   assert(out != NULL);
@@ -941,3 +986,162 @@ void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
   // save statistics
   STATISTICS_APPEND_CSV(stat);
 }
+#else
+
+// LAYERNORM_METHOD==LAYERNORM_SOLE
+
+#define LUT_BITS 5
+#define LUT_SIZE (1<<(LUT_BITS))
+#define LUT_QBITS  14            // Q1.14 format
+
+uint16_t recip_sqrt_LUT[LUT_SIZE];
+int recip_sqrt_LUT_initialized = 0;
+
+void init_recip_sqrt_LUT() {
+    for (int i = 0; i < LUT_SIZE; i++) {
+        double m = 1.0 + (i + 0.5) * (1.0 / LUT_SIZE); // m ∈ [1,2)
+        double invsqrt = 1.0 / sqrt(m);
+        int q = (int)round(invsqrt * (1 << LUT_QBITS));
+        if (q >= (1 << 15)) q = (1 << 15) - 1;
+        recip_sqrt_LUT[i] = (uint16_t)q;
+        // DEBUG("[%2d] m=%.4f -> invsqrt=%.6f -> Q=%d\n", i, m, invsqrt, q);
+    }
+}
+
+float approx_inv_sqrt(float x) {
+  if (x <= 0.0f) return 0.0f;
+
+  // 取出 exponent & mantissa (IEEE 754 float)
+  uint32_t bits;
+  memcpy(&bits, &x, sizeof(bits));
+  int exp = ((bits >> 23) & 0xFF) - 127;
+  int mant = (bits & 0x7FFFFF) >> (23 - LUT_BITS);
+
+  // 正規化 mantissa [1,2)
+  float inv_m = recip_sqrt_LUT[mant] / (float)(1 << LUT_QBITS);
+
+  // exponent 修正： 2^(-exp/2)
+  float exp_corr = ldexpf(1.0f, -(exp >> 1));
+  if (exp & 1) exp_corr *= 0.70710678f; // 若 exp 為奇數，加上 √0.5 修正
+
+  return inv_m * exp_corr;
+}
+
+
+void layernorm(DATA_TYPE* out, DATA_TYPE* x, DATA_TYPE* w, DATA_TYPE* b, int n,
+  int dim) {
+
+  if (!recip_sqrt_LUT_initialized) {
+    init_recip_sqrt_LUT();
+    recip_sqrt_LUT_initialized = 1;
+  }
+
+  assert(out != NULL);
+  assert(x != NULL);
+  assert(w != NULL);
+  assert(b != NULL);
+  DEBUG_LOG("n = %d, dim = %d", n, dim);
+  const DATA_TYPE eps = 1e-5;
+
+  STATISTICS_CREATE(stat);
+
+  // Initialize SRAM manager
+  SRAM_Manager_t sram;
+  sram_init(&sram, SRAM_DEFAULT_SIZE);
+
+  // Tiling parameters (can be configured)
+  int tile_n = LAYERNORM_TILED_N;   // Number of elements per tile
+
+  // Buffers for data reuse
+  DATA_TYPE* x_buffer = (DATA_TYPE*)sram_alloc(&sram, tile_n * dim * sizeof(DATA_TYPE));
+  DATA_TYPE* w_buffer = (DATA_TYPE*)sram_alloc(&sram, dim * sizeof(DATA_TYPE));
+  DATA_TYPE* b_buffer = (DATA_TYPE*)sram_alloc(&sram, dim * sizeof(DATA_TYPE));
+  DATA_TYPE* out_buffer = (DATA_TYPE*)sram_alloc(&sram, tile_n * dim * sizeof(DATA_TYPE));
+
+  // Load weights and biases into buffers
+  memcpy(w_buffer, w, dim * sizeof(DATA_TYPE));
+  memcpy(b_buffer, b, dim * sizeof(DATA_TYPE));
+  STATISTICS_INC_DRAM_TO_SRAM(stat, dim * sizeof(DATA_TYPE) * 2); // w, b
+
+  // Perform tiled layer normalization (on dimension dim)
+  for (int n_tile = 0; n_tile < n; n_tile += tile_n) {
+    int current_tile_n = (n_tile + tile_n > n) ? (n - n_tile) : tile_n;
+
+    //
+    // Compute in SRAM
+    //
+
+    // Load input tile into x buffer (dim, n)
+    for (int i = 0; i < current_tile_n; i++) {
+      for (int d = 0; d < dim; d++) {
+        x_buffer[d * current_tile_n + i] = x[d * n + i + n_tile];
+        STATISTICS_INC_DRAM_TO_SRAM(stat, sizeof(DATA_TYPE)); // read x
+      }
+    }
+
+    // Perform layer normalization for the current tile
+    for (int i = 0; i < current_tile_n; i++) {
+      DATA_TYPE mean = 0.0f;
+      DATA_TYPE variance = 0.0f;
+
+      DATA_TYPE Ex = 0;
+      DATA_TYPE Ex2 = 0;
+
+      // Stage 1: Static Calculation
+      for (int d = 0; d < dim; d++) {
+        DATA_TYPE x_val = x_buffer[d * current_tile_n + i];
+        x_val = fp16_clip(x_val);
+        Ex = fp16_clip(Ex + x_val);
+        Ex2 = fp16_clip(Ex2 + fp16_clip(x_val * x_val));
+      }
+
+      // Ex = fp16_clip(Ex);
+      // Ex2 = fp16_clip(Ex2);
+
+      // process
+      mean = Ex / dim;
+      mean = fp16_clip(mean);
+
+      variance = Ex2 / dim - mean * mean;
+      variance = fp16_clip(variance);
+
+      // standard = sqrtf(variance + eps);
+      // DATA_TYPE standard_inv = 1.0f / standard;
+      DATA_TYPE standard_inv = fp16_clip(approx_inv_sqrt(variance + eps));
+
+      // Stage 2: Affine Transformation
+      for (int d = 0; d < dim; d++) {
+        out_buffer[d * current_tile_n + i] =  (x_buffer[d * current_tile_n + i] - mean) * standard_inv * w_buffer[d] + b_buffer[d];
+      }
+
+      STATISTICS_INC_MAC(stat, dim * 2); // scale and bias
+      STATISTICS_INC_NON_LINEAR_OP(stat, dim); // sqrt
+      STATISTICS_INC_ADD(stat, dim * 2); // mean subtraction and bias addition
+      STATISTICS_INC_DIV(stat, dim); // variance normalization
+    }
+
+    // Write output tile back to DRAM
+    for (int i = 0; i < current_tile_n; i++) {
+      for (int d = 0; d < dim; d++) {
+        out[d * n + i + n_tile] = out_buffer[d * current_tile_n + i];
+        STATISTICS_INC_SRAM_TO_DRAM(stat, sizeof(DATA_TYPE)); // write out
+      }
+    }
+
+    //
+    // Compute in SRAM (end)
+    //
+  } // n_tile
+
+  STATISTICS_SET_SRAM_SIZE(stat, sram.sram_size);
+  STATISTICS_SET_SRAM_USED(stat, sram.used_size);
+
+  DEBUG_LOG("SRAM usage: %zu bytes, SRAM size: %zu bytes (%.2f%% used)",
+  sram.used_size, sram.sram_size, (float)sram.used_size / sram.sram_size * 100.0f);
+
+  // Free buffers
+  sram_free_all(&sram);
+  // save statistics
+  STATISTICS_APPEND_CSV(stat);
+}
+#endif // LAYERNORM_METHOD
